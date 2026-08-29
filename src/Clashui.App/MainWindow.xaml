@@ -10,8 +10,8 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- 官方 TitleBar 控件：图标/标题/拖拽区一体，高度自管 -->
-        <TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="Clashui"/>
+        <!-- 官方 TitleBar 控件：图标/标题/拖拽区一体；高度显式对齐 Tall(48px) 的系统按钮 -->
+        <TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="Clashui" Height="48"/>
 
         <Grid Grid.Row="1">
             <WebView2 x:Name="Panel"/>
