@@ -75,6 +75,8 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(exitItem);
 
         _icon = new TrayIcon(1, iconPath, "Clashui");
+        // 裸 TrayIcon 不会自动入托盘：IsVisible 默认 false，必须显式开启
+        _icon.IsVisible = true;
         _icon.Selected += (_, _) => Safe(_showWindow);
         _icon.ContextMenu += (_, e) => e.Flyout = _menu;
 
