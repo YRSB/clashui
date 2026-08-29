@@ -9,6 +9,7 @@ public sealed partial class MainWindow : Window
 {
     private readonly AppController _controller;
     private bool _navigated;
+    private bool _panelReady;
 
     public MainWindow(AppController controller)
     {
@@ -21,11 +22,12 @@ public sealed partial class MainWindow : Window
         if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
             presenter.Maximize();
 
-        // 关闭 = 隐藏到托盘；真正退出走托盘菜单
+        // 关闭 = 隐藏到托盘并让面板进入低内存模式；真正退出走托盘菜单
         AppWindow.Closing += (_, e) =>
         {
             e.Cancel = true;
             AppWindow.Hide();
+            SetPanelMemoryTarget(low: true);
         };
 
         _controller.StateChanged += OnStateChanged;
@@ -38,6 +40,27 @@ public sealed partial class MainWindow : Window
     {
         AppWindow.Show();
         Activate();
+        SetPanelMemoryTarget(low: false);
+    }
+
+    /// 隐藏到托盘时把 WebView2 切到低内存目标（引擎收缩缓存、必要时换出内存，
+    /// 脚本与 WebSocket 继续运行）；显示时恢复正常。官方文档要求二选一，
+    /// 不要与 TrySuspendAsync 混用。
+    private void SetPanelMemoryTarget(bool low)
+    {
+        if (!_panelReady) return;
+        try
+        {
+            Panel.CoreWebView2.MemoryUsageTargetLevel = low
+                ? CoreWebView2MemoryUsageTargetLevel.Low
+                : CoreWebView2MemoryUsageTargetLevel.Normal;
+            AppLog.Info($"面板内存目标 → {(low ? "Low" : "Normal")}");
+        }
+        catch (Exception ex)
+        {
+            // 旧版 WebView2 Runtime 可能没有该 API，降级为仅不生效
+            AppLog.Error("调整面板内存目标失败", ex);
+        }
     }
 
     private void OnStateChanged()
@@ -65,8 +88,16 @@ public sealed partial class MainWindow : Window
         _navigated = true;
         try
         {
-            // M0 使用默认用户数据目录（exe 目录下的 WebView2 文件夹）；后续版本改为指向数据目录
-            await Panel.EnsureCoreWebView2Async();
+            var options = new CoreWebView2EnvironmentOptions
+            {
+                // 面板用不上跟踪防护，关闭可省内存与 CPU
+                EnableTrackingPrevention = false,
+                AdditionalBrowserArguments = "--renderer-process-limit=1",
+            };
+            // WinUI3 投影只有 CreateWithOptionsAsync（folder 传 null 用默认值）
+            var env = await CoreWebView2Environment.CreateWithOptionsAsync(null, null, options);
+            await Panel.EnsureCoreWebView2Async(env);
+            _panelReady = true;
             Panel.Source = new Uri(_controller.DashboardUrl);
         }
         catch (Exception ex)

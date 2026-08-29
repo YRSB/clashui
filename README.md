@@ -4,6 +4,7 @@ mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系
 
 ## 现有功能（M0）
 
+- WebView2 内存优化：面板隐藏到托盘时切 `MemoryUsageTargetLevel.Low`（实测工作集 ~680MB → ~70MB），显示时恢复；环境关闭跟踪防护 + `--renderer-process-limit=1`
 - 托盘常驻：左键打开面板（最大化窗口），右键菜单操作；关闭窗口即隐藏到托盘，真正退出走托盘菜单
 - 静默启动：托盘「静默启动」开关（写入 settings.json），或 `--silent` / `-s` 参数；静默模式下不创建主窗口，仅托盘运行，首次点托盘才创建窗口
 - 配置文件切换：托盘「配置文件」子菜单列出 `profiles\` 下所有 YAML，点击切换并热重载（失败自动整核重启）
