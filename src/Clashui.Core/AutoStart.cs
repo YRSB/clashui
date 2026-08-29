@@ -12,10 +12,10 @@ public static class AutoStart
         return Run("schtasks", $"/Query /TN {TaskName}") == 0;
     }
 
-    /// 需要在管理员权限下调用（RL HIGHEST 要求）。
+    /// 需要在管理员权限下调用（RL HIGHEST 要求）。注册的计划任务带 --silent，登录后静默启动。
     public static bool Register(string exePath)
     {
-        return Run("schtasks", $"/Create /F /TN {TaskName} /SC ONLOGON /RL HIGHEST /TR \"\\\"{exePath}\\\"\"") == 0;
+        return Run("schtasks", $"/Create /F /TN {TaskName} /SC ONLOGON /RL HIGHEST /TR \"\\\"{exePath}\\\" --silent\"") == 0;
     }
 
     public static bool Unregister()

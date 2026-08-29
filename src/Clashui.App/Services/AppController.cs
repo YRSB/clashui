@@ -128,6 +128,12 @@ public sealed class AppController
         }
     }
 
+    public void ToggleSilentStart(bool enabled)
+    {
+        Settings.SilentStart = enabled;
+        SettingsStore.Save(Settings);
+    }
+
     public void OpenDataFolder() => OpenFolder(AppPaths.Root);
 
     public void OpenProfilesFolder()

@@ -17,6 +17,7 @@ public sealed class TrayController : IDisposable
     private readonly MenuFlyoutSubItem _profilesItem = new() { Text = "配置文件" };
     private readonly ToggleMenuFlyoutItem _sysProxyItem;
     private readonly ToggleMenuFlyoutItem _tunItem;
+    private readonly ToggleMenuFlyoutItem _silentStartItem;
     private readonly ToggleMenuFlyoutItem _autoStartItem;
     private readonly MenuFlyoutItem _elevateItem;
 
@@ -41,7 +42,10 @@ public sealed class TrayController : IDisposable
             if (Elevation.RelaunchElevated()) _controller.Exit();
         });
 
-        _autoStartItem = new ToggleMenuFlyoutItem { Text = "开机自启（管理员）" };
+        _silentStartItem = new ToggleMenuFlyoutItem { Text = "静默启动" };
+        _silentStartItem.Click += (_, _) => Safe(() => _controller.ToggleSilentStart(_silentStartItem.IsChecked));
+
+        _autoStartItem = new ToggleMenuFlyoutItem { Text = "开机自启（静默）" };
         _autoStartItem.Click += (_, _) => Safe(() =>
         {
             var ok = _autoStartItem.IsChecked
@@ -67,6 +71,7 @@ public sealed class TrayController : IDisposable
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(dataItem);
         menu.Items.Add(_elevateItem);
+        menu.Items.Add(_silentStartItem);
         menu.Items.Add(_autoStartItem);
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(exitItem);
@@ -95,6 +100,7 @@ public sealed class TrayController : IDisposable
         var settings = _controller.Settings;
         _sysProxyItem.IsChecked = settings.SystemProxyEnabled;
         _tunItem.IsChecked = settings.TunEnabled;
+        _silentStartItem.IsChecked = settings.SilentStart;
         try { _autoStartItem.IsChecked = AutoStart.IsRegistered(); } catch { }
         _elevateItem.Visibility = Elevation.IsElevated ? Visibility.Collapsed : Visibility.Visible;
         _icon.ToolTipText = _controller.IsCoreRunning ? "Clashui — 核心运行中" : "Clashui — 核心未运行";

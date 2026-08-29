@@ -9,8 +9,12 @@ public partial class App : Application
 {
     private static Mutex? _singleInstance;
     private static TrayController? _tray;
+    private static MainWindow? _mainWindow;
 
     public static AppController Controller { get; private set; } = null!;
+
+    /// 静默启动：--silent / -s 参数，或 settings.json 里的 SilentStart
+    public static bool StartSilent { get; private set; }
 
     public App() => InitializeComponent();
 
@@ -28,13 +32,16 @@ public partial class App : Application
             Controller.Initialize();
             Controller.ExitRequested = Shutdown;
 
-            var window = new MainWindow(Controller);
+            var hasSilentArg = Environment.GetCommandLineArgs().Any(a => a is "--silent" or "-s");
+            StartSilent = hasSilentArg || Controller.Settings.SilentStart;
+
             _tray = new TrayController(
                 Controller,
-                window.ShowAndActivate,
+                ShowMainWindow,
                 Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"));
 
-            window.Activate();
+            // 静默启动时不创建主窗口（连 HWND 都不存在，杜绝窗口闪烁），首次点托盘再创建
+            if (!StartSilent) ShowMainWindow();
             Controller.StartOnLaunch();
         }
         catch (Exception ex)
@@ -42,6 +49,17 @@ public partial class App : Application
             AppLog.Error("初始化失败", ex);
             ExitProcess();
         }
+    }
+
+    public static void ShowMainWindow()
+    {
+        if (_mainWindow is null)
+        {
+            _mainWindow = new MainWindow(Controller);
+            _mainWindow.Activate();
+            return;
+        }
+        _mainWindow.ShowAndActivate();
     }
 
     private static void Shutdown()

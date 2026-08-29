@@ -17,6 +17,8 @@ public sealed class AppSettings
     public bool TunEnabled { get; set; } = true;
     public bool SystemProxyEnabled { get; set; }
     public bool StartCoreOnLaunch { get; set; } = true;
+    /// 静默启动：启动时不显示主窗口，仅托盘运行
+    public bool SilentStart { get; set; }
 }
 
 public static partial class SettingsStore

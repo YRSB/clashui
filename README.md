@@ -4,7 +4,8 @@ mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系
 
 ## 现有功能（M0）
 
-- 托盘常驻：左键打开面板，右键菜单操作
+- 托盘常驻：左键打开面板（最大化窗口），右键菜单操作；关闭窗口即隐藏到托盘，真正退出走托盘菜单
+- 静默启动：托盘「静默启动」开关（写入 settings.json），或 `--silent` / `-s` 参数；静默模式下不创建主窗口，仅托盘运行，首次点托盘才创建窗口
 - 配置文件切换：托盘「配置文件」子菜单列出 `profiles\` 下所有 YAML，点击切换并热重载（失败自动整核重启）
 - 核心进程托管：启动 / 停止 / 崩溃自动重启（3 秒后拉起）；核心挂载 kill-on-close Job，应用强杀/崩溃不残留孤儿进程
 - TUN 模式开关（需管理员，见下）
@@ -40,6 +41,7 @@ scripts/           图标生成等工具脚本
 1. `dotnet publish src/Clashui.App -c Release`（NativeAOT，产物在 `bin\Release\...\publish\`）
 2. mihomo 三选一：数据目录放 `mihomo.exe` / `settings.json` 设 `MihomoPath` / 直接用 PATH 里的（如 scoop 安装的）；把订阅 YAML 放进 `profiles\`，托盘「配置文件」子菜单选择（或 `settings.json` 的 `ActiveProfile`，不填用 default.yaml）
 3. 启动 Clashui.App.exe —— 若开启 TUN 会弹 UAC 提权重启一次；之后用托盘「开机自启」注册计划任务，登录即静默提权运行
+4. 静默启动：托盘勾选「静默启动」后所有启动均不显示窗口；也可带 `--silent`（`-s`）参数启动。开机自启的计划任务已自动携带该参数
 
 ## TUN / 提权设计
 

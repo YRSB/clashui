@@ -16,7 +16,10 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "Clashui";
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"));
+        // 还原（取消最大化）时的默认尺寸；启动即最大化
         AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1120, 760));
+        if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+            presenter.Maximize();
 
         // 关闭 = 隐藏到托盘；真正退出走托盘菜单
         AppWindow.Closing += (_, e) =>
