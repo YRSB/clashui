@@ -1,6 +1,7 @@
 using Clashui.App.Services;
 using Clashui.Core;
 using Microsoft.UI;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -26,6 +27,15 @@ public sealed partial class MainWindow : Window
         // 官方 TitleBar 控件（WinAppSDK 1.7+）：ExtendsContentIntoTitleBar + SetTitleBar 两步标准流程
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        // 触屏友好：标题栏与系统按钮改用 48px 高度（须在 ExtendsContentIntoTitleBar 之后设置）
+        try
+        {
+            AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("设置 Tall 标题栏失败，回退标准高度", ex);
+        }
         AppTitleBar.IconSource = new ImageIconSource
         {
             ImageSource = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"))),
