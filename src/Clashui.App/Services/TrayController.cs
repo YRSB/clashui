@@ -1,24 +1,22 @@
 using Clashui.Core;
-using H.NotifyIcon;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
+using WinUIEx;
 
 namespace Clashui.App.Services;
 
-/// 托盘图标与右键菜单；左键点击打开面板窗口。
+/// 托盘图标与右键菜单（WinUIEx.TrayIcon）；左键点击打开面板窗口。
 public sealed class TrayController : IDisposable
 {
     private readonly AppController _controller;
     private readonly Action _showWindow;
-    private readonly TaskbarIcon _icon;
-    private readonly MenuFlyoutSubItem _profilesItem = new() { Text = "配置文件" };
+    private readonly TrayIcon _icon;
+    private readonly MenuFlyout _menu;
     private readonly ToggleMenuFlyoutItem _sysProxyItem;
     private readonly ToggleMenuFlyoutItem _tunItem;
     private readonly ToggleMenuFlyoutItem _silentStartItem;
     private readonly ToggleMenuFlyoutItem _autoStartItem;
+    private readonly MenuFlyoutSubItem _profilesItem = new() { Text = "配置文件" };
     private readonly MenuFlyoutItem _elevateItem;
 
     public TrayController(AppController controller, Action showWindow, string iconPath)
@@ -59,39 +57,28 @@ public sealed class TrayController : IDisposable
             Refresh();
         });
 
-        var menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
-        menu.Opening += (_, _) => RebuildProfiles();
-        menu.Items.Add(showItem);
-        menu.Items.Add(_profilesItem);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(_sysProxyItem);
-        menu.Items.Add(_tunItem);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(restartItem);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(dataItem);
-        menu.Items.Add(_elevateItem);
-        menu.Items.Add(_silentStartItem);
-        menu.Items.Add(_autoStartItem);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(exitItem);
+        _menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
+        _menu.Opening += (_, _) => RebuildProfiles();
+        _menu.Items.Add(showItem);
+        _menu.Items.Add(_profilesItem);
+        _menu.Items.Add(new MenuFlyoutSeparator());
+        _menu.Items.Add(_sysProxyItem);
+        _menu.Items.Add(_tunItem);
+        _menu.Items.Add(new MenuFlyoutSeparator());
+        _menu.Items.Add(restartItem);
+        _menu.Items.Add(new MenuFlyoutSeparator());
+        _menu.Items.Add(dataItem);
+        _menu.Items.Add(_elevateItem);
+        _menu.Items.Add(_silentStartItem);
+        _menu.Items.Add(_autoStartItem);
+        _menu.Items.Add(new MenuFlyoutSeparator());
+        _menu.Items.Add(exitItem);
 
-        var leftClickCommand = new XamlUICommand { Description = "显示面板" };
-        leftClickCommand.ExecuteRequested += (_, _) => _showWindow();
-
-        _icon = new TaskbarIcon
-        {
-            ToolTipText = "Clashui",
-            IconSource = new BitmapImage(new Uri(iconPath)),
-            ContextFlyout = menu,
-            ContextMenuMode = ContextMenuMode.SecondWindow,
-            LeftClickCommand = leftClickCommand,
-            NoLeftClickDelay = true,
-        };
-        _icon.ForceCreate();
+        _icon = new TrayIcon(1, iconPath, "Clashui");
+        _icon.Selected += (_, _) => Safe(_showWindow);
+        _icon.ContextMenu += (_, e) => e.Flyout = _menu;
 
         _controller.StateChanged += Refresh;
-        _controller.Notification += ShowBalloon;
         Refresh();
     }
 
@@ -103,7 +90,7 @@ public sealed class TrayController : IDisposable
         _silentStartItem.IsChecked = settings.SilentStart;
         try { _autoStartItem.IsChecked = AutoStart.IsRegistered(); } catch { }
         _elevateItem.Visibility = Elevation.IsElevated ? Visibility.Collapsed : Visibility.Visible;
-        _icon.ToolTipText = _controller.IsCoreRunning ? "Clashui — 核心运行中" : "Clashui — 核心未运行";
+        try { _icon.Tooltip = _controller.IsCoreRunning ? "Clashui — 核心运行中" : "Clashui — 核心未运行"; } catch { }
         RebuildProfiles();
     }
 
@@ -135,8 +122,7 @@ public sealed class TrayController : IDisposable
         }
 
         _profilesItem.Items.Add(new MenuFlyoutSeparator());
-        var openItem = Item("打开 profiles 目录", _controller.OpenProfilesFolder);
-        _profilesItem.Items.Add(openItem);
+        _profilesItem.Items.Add(Item("打开 profiles 目录", _controller.OpenProfilesFolder));
     }
 
     private static void Safe(Action action)
@@ -154,12 +140,6 @@ public sealed class TrayController : IDisposable
         var item = new MenuFlyoutItem { Text = text };
         item.Click += (_, _) => Safe(onClick);
         return item;
-    }
-
-    private void ShowBalloon(string message)
-    {
-        try { _icon.ShowNotification("Clashui", message); }
-        catch { /* 通知失败不影响主流程 */ }
     }
 
     public void Dispose() => _icon.Dispose();
