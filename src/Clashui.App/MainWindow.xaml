@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Clashui.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Clashui">
+    <Grid>
+        <WebView2 x:Name="Panel" />
+        <InfoBar
+            x:Name="Banner"
+            IsOpen="False"
+            IsClosable="False"
+            Severity="Warning"
+            Title="核心未运行"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Top">
+            <InfoBar.ActionButton>
+                <Button Content="打开数据目录" Click="OpenDataFolder_Click" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+    </Grid>
+</Window>
