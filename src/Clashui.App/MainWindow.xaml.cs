@@ -1,7 +1,12 @@
 using Clashui.App.Services;
 using Clashui.Core;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.Web.WebView2.Core;
+using Windows.UI;
 
 namespace Clashui.App;
 
@@ -17,6 +22,19 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "Clashui";
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"));
+
+        // 官方 TitleBar 控件（WinAppSDK 1.7+）：ExtendsContentIntoTitleBar + SetTitleBar 两步标准流程
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+        AppTitleBar.IconSource = new ImageIconSource
+        {
+            ImageSource = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"))),
+        };
+        SystemBackdrop = new MicaBackdrop();
+        UpdateCaptionButtonColors();
+        // Window 没有 ActualTheme，从根元素取主题
+        ((FrameworkElement)Content).ActualThemeChanged += (_, _) => UpdateCaptionButtonColors();
+
         // 还原（取消最大化）时的默认尺寸；启动即最大化
         AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1120, 760));
         if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
@@ -61,6 +79,26 @@ public sealed partial class MainWindow : Window
             // 旧版 WebView2 Runtime 可能没有该 API，降级为仅不生效
             AppLog.Error("调整面板内存目标失败", ex);
         }
+    }
+
+    /// 标题按钮随主题着色（延伸进标题栏后系统默认底色会露馅）
+    private void UpdateCaptionButtonColors()
+    {
+        var dark = ((FrameworkElement)Content).ActualTheme == ElementTheme.Dark;
+        var fg = dark ? Colors.White : Colors.Black;
+        var titleBar = AppWindow.TitleBar;
+        titleBar.ButtonForegroundColor = fg;
+        titleBar.ButtonInactiveForegroundColor = Color.FromArgb(0x77, fg.R, fg.G, fg.B);
+        titleBar.ButtonBackgroundColor = Colors.Transparent;
+        titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+        titleBar.ButtonHoverBackgroundColor = dark
+            ? Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)
+            : Color.FromArgb(0x14, 0x00, 0x00, 0x00);
+        titleBar.ButtonHoverForegroundColor = fg;
+        titleBar.ButtonPressedBackgroundColor = dark
+            ? Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF)
+            : Color.FromArgb(0x28, 0x00, 0x00, 0x00);
+        titleBar.ButtonPressedForegroundColor = fg;
     }
 
     private void OnStateChanged()

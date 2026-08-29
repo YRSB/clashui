@@ -5,18 +5,28 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Clashui">
     <Grid>
-        <WebView2 x:Name="Panel" />
-        <InfoBar
-            x:Name="Banner"
-            IsOpen="False"
-            IsClosable="False"
-            Severity="Warning"
-            Title="核心未运行"
-            HorizontalAlignment="Stretch"
-            VerticalAlignment="Top">
-            <InfoBar.ActionButton>
-                <Button Content="打开数据目录" Click="OpenDataFolder_Click" />
-            </InfoBar.ActionButton>
-        </InfoBar>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- 官方 TitleBar 控件：图标/标题/拖拽区一体，高度自管 -->
+        <TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="Clashui"/>
+
+        <Grid Grid.Row="1">
+            <WebView2 x:Name="Panel"/>
+            <InfoBar
+                x:Name="Banner"
+                IsOpen="False"
+                IsClosable="False"
+                Severity="Warning"
+                Title="核心未运行"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Top">
+                <InfoBar.ActionButton>
+                    <Button Content="打开数据目录" Click="OpenDataFolder_Click" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+        </Grid>
     </Grid>
 </Window>
