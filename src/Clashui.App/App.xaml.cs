@@ -38,6 +38,7 @@ public partial class App : Application
             _tray = new TrayController(
                 Controller,
                 ShowMainWindow,
+                ToggleMainWindow,
                 Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"));
 
             // 静默启动时不创建主窗口（连 HWND 都不存在，杜绝窗口闪烁），首次点托盘再创建
@@ -60,6 +61,17 @@ public partial class App : Application
             return;
         }
         _mainWindow.ShowAndActivate();
+    }
+
+    /// 托盘左键：窗口可见则隐藏到托盘（进低内存模式），否则显示并激活。
+    public static void ToggleMainWindow()
+    {
+        if (_mainWindow is null || !_mainWindow.AppWindow.IsVisible)
+        {
+            ShowMainWindow();
+            return;
+        }
+        _mainWindow.HideToTray();
     }
 
     private static void Shutdown()

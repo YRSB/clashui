@@ -54,8 +54,7 @@ public sealed partial class MainWindow : Window
         AppWindow.Closing += (_, e) =>
         {
             e.Cancel = true;
-            AppWindow.Hide();
-            SetPanelMemoryTarget(low: true);
+            HideToTray();
         };
 
         _controller.StateChanged += OnStateChanged;
@@ -69,6 +68,13 @@ public sealed partial class MainWindow : Window
         AppWindow.Show();
         Activate();
         SetPanelMemoryTarget(low: false);
+    }
+
+    /// 隐藏到托盘并让面板进入低内存模式（关闭按钮与托盘左键切换共用）。
+    public void HideToTray()
+    {
+        AppWindow.Hide();
+        SetPanelMemoryTarget(low: true);
     }
 
     /// 隐藏到托盘时把 WebView2 切到低内存目标（引擎收缩缓存、必要时换出内存，

@@ -5,11 +5,12 @@ using WinUIEx;
 
 namespace Clashui.App.Services;
 
-/// 托盘图标与右键菜单（WinUIEx.TrayIcon）；左键点击打开面板窗口。
+/// 托盘图标与右键菜单（WinUIEx.TrayIcon）；左键点击切换面板显示/隐藏。
 public sealed class TrayController : IDisposable
 {
     private readonly AppController _controller;
     private readonly Action _showWindow;
+    private readonly Action _toggleWindow;
     private readonly TrayIcon _icon;
     private readonly MenuFlyout _menu;
     private readonly ToggleMenuFlyoutItem _sysProxyItem;
@@ -19,10 +20,11 @@ public sealed class TrayController : IDisposable
     private readonly MenuFlyoutSubItem _profilesItem = new() { Text = "配置文件" };
     private readonly MenuFlyoutItem _elevateItem;
 
-    public TrayController(AppController controller, Action showWindow, string iconPath)
+    public TrayController(AppController controller, Action showWindow, Action toggleWindow, string iconPath)
     {
         _controller = controller;
         _showWindow = showWindow;
+        _toggleWindow = toggleWindow;
 
         var showItem = Item("显示面板", () => _showWindow());
         var restartItem = Item("重启核心", () => _ = _controller.RestartCoreAsync());
@@ -77,7 +79,7 @@ public sealed class TrayController : IDisposable
         _icon = new TrayIcon(1, iconPath, "Clashui");
         // 裸 TrayIcon 不会自动入托盘：IsVisible 默认 false，必须显式开启
         _icon.IsVisible = true;
-        _icon.Selected += (_, _) => Safe(_showWindow);
+        _icon.Selected += (_, _) => Safe(_toggleWindow);
         _icon.ContextMenu += (_, e) => e.Flyout = _menu;
 
         _controller.StateChanged += Refresh;
