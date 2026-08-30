@@ -11,6 +11,7 @@ public sealed class TrayController : IDisposable
     private readonly AppController _controller;
     private readonly Action _showWindow;
     private readonly Action _toggleWindow;
+    private readonly string _assetsDir;
     private readonly TrayIcon _icon;
     private readonly MenuFlyout _menu;
     private readonly ToggleMenuFlyoutItem _sysProxyItem;
@@ -24,6 +25,7 @@ public sealed class TrayController : IDisposable
         _controller = controller;
         _showWindow = showWindow;
         _toggleWindow = toggleWindow;
+        _assetsDir = Path.GetDirectoryName(iconPath) ?? AppContext.BaseDirectory;
 
         var showItem = Item("显示面板", () => _showWindow());
         var restartItem = Item("重启核心", () => _ = _controller.RestartCoreAsync());
@@ -75,7 +77,25 @@ public sealed class TrayController : IDisposable
         _tunItem.IsChecked = settings.TunEnabled;
         _silentStartItem.IsChecked = settings.SilentStart;
         try { _autoStartItem.IsChecked = AutoStart.IsRegistered(); } catch { }
-        try { _icon.Tooltip = _controller.IsCoreRunning ? "Clashui — 核心运行中" : "Clashui — 核心未运行"; } catch { }
+
+        // 状态可视化：灰化=核心未运行，绿点=系统代理，橙点=TUN（与系统代理同开时优先显示 TUN）
+        var iconFile = !_controller.IsCoreRunning ? "app-off.ico"
+            : settings.TunEnabled ? "app-tun.ico"
+            : settings.SystemProxyEnabled ? "app-proxy.ico"
+            : "app.ico";
+        var tooltip = !_controller.IsCoreRunning ? "Clashui — 核心未运行"
+            : settings.TunEnabled ? "Clashui — 核心运行中（TUN）"
+            : settings.SystemProxyEnabled ? "Clashui — 核心运行中（系统代理）"
+            : "Clashui — 核心运行中";
+        try
+        {
+            _icon.SetIcon(Path.Combine(_assetsDir, iconFile));
+            _icon.Tooltip = tooltip;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("更新托盘图标失败", ex);
+        }
         RebuildProfiles();
     }
 

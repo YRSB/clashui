@@ -5,16 +5,16 @@ mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系
 ## 现有功能（M0）
 
 - WebView2 内存优化：面板隐藏到托盘时切 `MemoryUsageTargetLevel.Low`（实测工作集 ~680MB → ~70MB），显示时恢复；环境关闭跟踪防护 + `--renderer-process-limit=1`
-- 托盘常驻：左键打开面板（最大化窗口），右键菜单操作；关闭窗口即隐藏到托盘，真正退出走托盘菜单
+- 托盘常驻：左键打开面板（最大化窗口），右键菜单操作；关闭窗口即隐藏到托盘，真正退出走托盘菜单；图标随状态变化（核心未运行灰化 / 系统代理绿点 / TUN 橙点，经典 Clash 猫头，取自 clash-verge-rev）
 - 静默启动：托盘「静默启动」开关（写入 settings.json），或 `--silent` / `-s` 参数；静默模式下不创建主窗口，仅托盘运行，首次点托盘才创建窗口
 - 配置文件切换：托盘「配置文件」子菜单列出 `profiles\` 下所有 YAML，点击切换并热重载（失败自动整核重启）
 - 核心进程托管：启动 / 停止 / 崩溃自动重启（3 秒后拉起）；核心挂载 kill-on-close Job，应用强杀/崩溃不残留孤儿进程
 - TUN 模式开关（需管理员，见下）
-- 系统代理开关（写注册表 + 广播刷新，立即生效）
+- 系统代理开关（写注册表 + 广播刷新，立即生效）；启动时自动清理崩溃残留的指向本应用端口的系统代理（防开机断网）
 - 配置合成：订阅 profile 原样保留，注入端口 / secret / external-controller / external-ui / tun / dns
 - mihomo 自动下载面板（`external-ui-url`，默认 metacubexd gh-pages）；面板地址带 hostname/port/secret 深链，首次打开自动连接，免手填
 - 开机自启：计划任务（ONLOGON + 最高权限，登录不弹 UAC）
-- 关闭窗口 = 隐藏到托盘；单实例互斥
+- 关闭窗口 = 隐藏到托盘；单实例互斥，再启动自动激活转发（双击 exe 弹出面板）
 
 ## 目录
 
@@ -55,7 +55,7 @@ scripts/           图标生成等工具脚本
 - [ ] 核心自动下载与更新（M2，GitHub Releases + 哈希校验）
 - [x] ~~WebView2 用户数据目录迁到数据目录~~（已迁至 `%LOCALAPPDATA%\Clashui\webview2`）
 - [x] ~~面板首次打开需在 metacubexd 设置页填一次 `127.0.0.1:9090` + secret~~（DashboardUrl 已带 `#/setup?hostname=&port=&secret=` 深链，setup 页自动连接）
-- [ ] 单实例目前是「第二个实例直接退出」，未做激活转发
+- [x] ~~单实例目前是「第二个实例直接退出」，未做激活转发~~（第二实例发命名信号 + `AllowSetForegroundWindow` 转授前台权，第一实例弹出面板；`--silent` 再启动不转发）
 
 ## AOT 注意事项
 
