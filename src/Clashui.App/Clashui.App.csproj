@@ -47,4 +47,10 @@
     <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
   </PropertyGroup>
 
+  <!-- AOT 的原生 pdb 由链接器直接写进 publish 目录，上面的属性在部分 SDK（如 11 preview）下
+       拦不住，发布后显式删除兜底 -->
+  <Target Name="RemoveNativePdbFromPublish" AfterTargets="Publish">
+    <Delete Files="$(PublishDir)$(TargetName).pdb" Condition="Exists('$(PublishDir)$(TargetName).pdb')" />
+  </Target>
+
 </Project>

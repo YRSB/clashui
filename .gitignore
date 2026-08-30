@@ -6,3 +6,4 @@ publish/
 artifacts/
 *.log
 publish*/
+publish.zip
