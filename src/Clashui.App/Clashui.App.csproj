@@ -20,7 +20,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <!-- 不用 Microsoft.WindowsAppSDK 伞包：它会带上 Widgets/AI/ML/Search 等用不到的
+         组件（自包含发布多出约 45MB 的 onnxruntime/DirectML 等）。按需引用子包，
+         版本对齐 2.4.0 伞包当时的解析结果（Runtime 伞包锁 [2.4.0]） -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.6" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="2.1.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.4.0" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.*" />
     <PackageReference Include="WinUIEx" Version="2.9.3" />
   </ItemGroup>
@@ -32,5 +37,11 @@
   <ItemGroup>
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- NativeAOT 的原生 pdb 只服务调试器/WER dump 分析（应用日志堆栈名来自二进制内嵌元数据，
+       不依赖 pdb），约 63MB 不进发布产物；bin\Release 下始终保留 -->
+  <PropertyGroup>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+  </PropertyGroup>
 
 </Project>

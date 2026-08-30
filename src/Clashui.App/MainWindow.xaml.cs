@@ -148,8 +148,10 @@ public sealed partial class MainWindow : Window
                 EnableTrackingPrevention = false,
                 AdditionalBrowserArguments = "--renderer-process-limit=1",
             };
-            // WinUI3 投影只有 CreateWithOptionsAsync（folder 传 null 用默认值）
-            var env = await CoreWebView2Environment.CreateWithOptionsAsync(null, null, options);
+            // WinUI3 投影只有 CreateWithOptionsAsync（browserExecutableFolder 传 null 用默认值）；
+            // 用户数据目录指到数据目录，避免缓存在 exe 旁越积越大
+            var env = await CoreWebView2Environment.CreateWithOptionsAsync(
+                null, AppPaths.WebView2DataDir, options);
             await Panel.EnsureCoreWebView2Async(env);
             _panelReady = true;
             Panel.Source = new Uri(_controller.DashboardUrl);
