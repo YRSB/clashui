@@ -39,7 +39,24 @@ public sealed class AppController
     }
 
     public bool IsCoreRunning => _core.State == CoreState.Running;
-    public string DashboardUrl => $"http://{Settings.ControllerAddr}/ui/";
+
+    /// 面板地址，带 metacubexd 的 setup 深链参数：该页读到 ?hostname 即自动用
+    /// 当前协议拼出后端地址、连同 secret 探测并保存，首次打开免手填；
+    /// 之后每次重开面板也会同步最新的端口/secret。fragment 不发往服务端，secret 不出 WebView2。
+    public string DashboardUrl
+    {
+        get
+        {
+            var addr = Settings.ControllerAddr;
+            var sep = addr.LastIndexOf(':');
+            var host = sep > 0 ? addr[..sep] : addr;
+            var port = sep > 0 ? addr[(sep + 1)..] : "";
+            var query = $"hostname={Uri.EscapeDataString(host)}";
+            if (port.Length > 0) query += $"&port={Uri.EscapeDataString(port)}";
+            query += $"&secret={Uri.EscapeDataString(Settings.Secret ?? "")}";
+            return $"http://{addr}/ui/#/setup?{query}";
+        }
+    }
 
     public void Initialize()
     {

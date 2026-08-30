@@ -12,7 +12,7 @@ mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系
 - TUN 模式开关（需管理员，见下）
 - 系统代理开关（写注册表 + 广播刷新，立即生效）
 - 配置合成：订阅 profile 原样保留，注入端口 / secret / external-controller / external-ui / tun / dns
-- mihomo 自动下载面板（`external-ui-url`，默认 metacubexd gh-pages）
+- mihomo 自动下载面板（`external-ui-url`，默认 metacubexd gh-pages）；面板地址带 hostname/port/secret 深链，首次打开自动连接，免手填
 - 开机自启：计划任务（ONLOGON + 最高权限，登录不弹 UAC）
 - 关闭窗口 = 隐藏到托盘；单实例互斥
 
@@ -50,11 +50,11 @@ scripts/           图标生成等工具脚本
 
 ## 已知限制 / 待办
 
-- [ ] 核心进程加入 Job Object：已完成
+- [x] ~~核心进程加入 Job Object~~（已完成）
 - [ ] 订阅管理 UI（M1 剩余）：订阅 URL 下载/更新、profile 增删改名（切换与热重载已由托盘子菜单实现）
 - [ ] 核心自动下载与更新（M2，GitHub Releases + 哈希校验）
-- [ ] WebView2 用户数据目录目前用默认值（exe 目录），计划迁到数据目录
-- [ ] 面板首次打开需在 metacubexd 设置页填一次 `127.0.0.1:9090` + secret
+- [x] ~~WebView2 用户数据目录迁到数据目录~~（已迁至 `%LOCALAPPDATA%\Clashui\webview2`）
+- [x] ~~面板首次打开需在 metacubexd 设置页填一次 `127.0.0.1:9090` + secret~~（DashboardUrl 已带 `#/setup?hostname=&port=&secret=` 深链，setup 页自动连接）
 - [ ] 单实例目前是「第二个实例直接退出」，未做激活转发
 
 ## AOT 注意事项
