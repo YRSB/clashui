@@ -1,13 +1,21 @@
+using System.IO.MemoryMappedFiles;
 using System.Threading;
 using Clashui.App.Services;
 using Clashui.Core;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 
 namespace Clashui.App;
 
 public partial class App : Application
 {
+    private const string MutexName = @"Local\Clashui.SingleInstance";
+    private const string ActivateEventName = @"Local\Clashui.ActivateSignal";
+    private const string ActivatePidMapName = @"Local\Clashui.ActivatePid";
+
     private static Mutex? _singleInstance;
+    private static EventWaitHandle? _activateSignal;
+    private static MemoryMappedFile? _activatePidFile;
     private static TrayController? _tray;
     private static MainWindow? _mainWindow;
 
@@ -22,6 +30,8 @@ public partial class App : Application
     {
         if (!AcquireSingleInstance())
         {
+            // 显式 --silent 的再启动（如计划任务重复触发）不弹窗，仅退出
+            if (!HasSilentArg) ForwardActivationSignal();
             ExitProcess();
             return;
         }
@@ -31,8 +41,9 @@ public partial class App : Application
             Controller = new AppController();
             Controller.Initialize();
             Controller.ExitRequested = Shutdown;
+            StartActivationWatcher();
 
-            var hasSilentArg = Environment.GetCommandLineArgs().Any(a => a is "--silent" or "-s");
+            var hasSilentArg = HasSilentArg;
             StartSilent = hasSilentArg || Controller.Settings.SilentStart;
 
             _tray = new TrayController(
@@ -89,12 +100,54 @@ public partial class App : Application
     {
         for (var attempt = 0; attempt < 20; attempt++)
         {
-            _singleInstance = new Mutex(initiallyOwned: true, @"Local\Clashui.SingleInstance", out var createdNew);
+            _singleInstance = new Mutex(initiallyOwned: true, MutexName, out var createdNew);
             if (createdNew) return true;
             _singleInstance.Dispose();
             // 提权重启场景下旧实例需要几秒才能退出，稍作等待
             Thread.Sleep(250);
         }
         return false;
+    }
+
+    private static bool HasSilentArg =>
+        Environment.GetCommandLineArgs().Any(a => a is "--silent" or "-s");
+
+    /// 再启动激活转发：本实例监听命名信号，收到即弹出主窗口——双击 exe 等价于托盘左键。
+    private static void StartActivationWatcher()
+    {
+        _activateSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName, out _);
+        // 第二实例要读 PID 来转授前台权，MMF 必须与实例同生命周期，不能 using
+        _activatePidFile = MemoryMappedFile.CreateOrOpen(ActivatePidMapName, sizeof(int));
+        using var view = _activatePidFile.CreateViewAccessor();
+        view.Write(0, Environment.ProcessId);
+
+        var dispatcher = DispatcherQueue.GetForCurrentThread();
+        _ = Task.Run(() =>
+        {
+            // 常驻等待再启动信号；进程退出时随线程一并终止
+            while (_activateSignal.WaitOne())
+            {
+                dispatcher.TryEnqueue(ShowMainWindow);
+            }
+        });
+    }
+
+    /// 抢锁失败的实例：退出前把前台设置权转授给第一实例并发激活信号。
+    private static void ForwardActivationSignal()
+    {
+        try
+        {
+            using var pidFile = MemoryMappedFile.OpenExisting(ActivatePidMapName);
+            using var view = pidFile.CreateViewAccessor();
+            var pid = view.ReadInt32(0);
+            if (pid > 0) NativeMethods.AllowSetForegroundWindow((uint)pid);
+        }
+        catch { /* 第一实例是旧版本或跨完整性级别打开失败，仅失去前台转授 */ }
+        try
+        {
+            using var signal = EventWaitHandle.OpenExisting(ActivateEventName);
+            signal.Set();
+        }
+        catch { /* 第一实例不存在（如旧版本运行中），维持静默退出 */ }
     }
 }
