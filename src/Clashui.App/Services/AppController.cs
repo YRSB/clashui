@@ -10,6 +10,9 @@ public sealed class AppController
     private readonly DispatcherQueue _dispatcher;
     private readonly CoreHost _core = new();
     private MihomoApiClient? _api;
+    private FileSystemWatcher? _profileWatcher;
+    private CancellationTokenSource? _profileDebounce;
+    private readonly SemaphoreSlim _reloadGate = new(1, 1);
 
     public AppSettings Settings { get; private set; } = null!;
 
@@ -29,7 +32,7 @@ public sealed class AppController
                 // 核心停止时不能让系统代理指向死端口，否则全系统断网
                 SystemProxy.Clear();
             }
-            StateChanged?.Invoke();
+            RaiseStateChanged();
         });
         _core.CrashLoop += _ => _dispatcher.TryEnqueue(() =>
             Notify("核心连续异常退出，请查看数据目录 core.log（订阅 provider 拉取失败时会出现）"));
@@ -44,6 +47,7 @@ public sealed class AppController
         Settings = SettingsStore.Load();
         Settings.ActiveProfile = ConfigComposer.ResolveProfile(Settings.ActiveProfile, createDefault: true);
         SettingsStore.Save(Settings);
+        StartProfileWatcher();
     }
 
     public async void StartOnLaunch()
@@ -119,7 +123,7 @@ public sealed class AppController
             }
             Settings.SystemProxyEnabled = enabled;
             SettingsStore.Save(Settings);
-            StateChanged?.Invoke();
+            RaiseStateChanged();
         }
         catch (Exception ex)
         {
@@ -177,7 +181,7 @@ public sealed class AppController
         if (!File.Exists(profilePath)) return;
         Settings.ActiveProfile = profilePath;
         SettingsStore.Save(Settings);
-        StateChanged?.Invoke();
+        RaiseStateChanged();
 
         if (!IsCoreRunning || _api is null)
         {
@@ -185,30 +189,102 @@ public sealed class AppController
             return;
         }
 
+        await ReloadCoreConfigAsync($"已切换到 {Path.GetFileName(profilePath)}（热重载）", restartOnFailure: true);
+    }
+
+    /// 监听 profiles 目录：手动编辑激活的配置文件后自动合成 + 热重载。
+    private void StartProfileWatcher()
+    {
+        _profileWatcher = new FileSystemWatcher(AppPaths.ProfilesDir)
+        {
+            // 部分编辑器保存走「写临时文件再改名」，仅听 LastWrite 会漏，故同时监听 FileName
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+            EnableRaisingEvents = true,
+        };
+        _profileWatcher.Changed += (_, e) => OnProfileFileMaybeChanged(e.FullPath);
+        _profileWatcher.Renamed += (_, e) => OnProfileFileMaybeChanged(e.FullPath);
+    }
+
+    private void OnProfileFileMaybeChanged(string fullPath)
+    {
+        try
+        {
+            if (!fullPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
+                && !fullPath.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)) return;
+            if (!string.Equals(fullPath, Settings.ActiveProfile, StringComparison.OrdinalIgnoreCase)) return;
+
+            // 防抖：一次保存常触发多个事件（编辑器分段写入），只留最后一次
+            _profileDebounce?.Cancel();
+            _profileDebounce?.Dispose();
+            var cts = new CancellationTokenSource();
+            _profileDebounce = cts;
+            _ = DebouncedReloadAsync(cts.Token);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("处理配置文件变更失败", ex);
+        }
+    }
+
+    private async Task DebouncedReloadAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(600, ct);
+            await ReloadCoreConfigAsync("检测到配置文件修改，已热重载", restartOnFailure: false);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    /// 合成当前激活配置并让运行中的核心热重载。
+    /// restartOnFailure 区分两种触发：托盘显式切换配置，失败可整核重启兜底；
+    /// 文件监听触发则绝不重启——用户可能正编辑到一半（YAML 暂时是坏的），
+    /// TUN 日常使用中断网代价太大，修复保存后防抖触发自然会再试。
+    private async Task ReloadCoreConfigAsync(string successMessage, bool restartOnFailure)
+    {
+        if (!IsCoreRunning || _api is null) return;
+        await _reloadGate.WaitAsync();
         try
         {
             ConfigComposer.Compose(Settings);
             if (await _api.ReloadConfigAsync(AppPaths.RuntimeConfigFile))
             {
-                Notify($"已切换到 {Path.GetFileName(profilePath)}（热重载）");
-                StateChanged?.Invoke();
+                Notify(successMessage);
+                RaiseStateChanged();
             }
-            else
+            else if (restartOnFailure)
             {
                 Notify("热重载失败，正在重启核心…");
                 await RestartCoreAsync();
             }
+            else
+            {
+                Notify("配置热重载失败（配置文件可能有误），修复保存后会自动重试；当前连接不受影响");
+            }
         }
         catch (Exception ex)
         {
-            // 超时/网络异常时热重载状态未知，回退为整核重启保证一致性
-            AppLog.Error("热重载失败，回退为重启核心", ex);
-            await RestartCoreAsync();
+            AppLog.Error("热重载失败", ex);
+            if (restartOnFailure)
+            {
+                // 超时/网络异常时热重载状态未知，回退为整核重启保证一致性
+                await RestartCoreAsync();
+            }
+            else
+            {
+                Notify("配置热重载失败，详情见日志；修复保存后会自动重试");
+            }
+        }
+        finally
+        {
+            _reloadGate.Release();
         }
     }
 
     public void Exit()
     {
+        _profileWatcher?.Dispose();
+        _profileDebounce?.Cancel();
         if (Settings.SystemProxyEnabled) SystemProxy.Clear();
         _core.Stop();
         ExitRequested?.Invoke();
@@ -219,6 +295,10 @@ public sealed class AppController
         AppLog.Info(message);
         _dispatcher.TryEnqueue(() => Notification?.Invoke(message));
     }
+
+    /// StateChanged 的触发源可能在线程池上（核心事件、文件监听），
+    /// 订阅方都会摸 XAML 对象，必须统一经 DispatcherQueue 派发回 UI 线程。
+    private void RaiseStateChanged() => _dispatcher.TryEnqueue(() => StateChanged?.Invoke());
 
     private void OnCoreReady()
     {
