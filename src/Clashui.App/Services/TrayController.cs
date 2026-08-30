@@ -18,7 +18,6 @@ public sealed class TrayController : IDisposable
     private readonly ToggleMenuFlyoutItem _silentStartItem;
     private readonly ToggleMenuFlyoutItem _autoStartItem;
     private readonly MenuFlyoutSubItem _profilesItem = new() { Text = "配置文件" };
-    private readonly MenuFlyoutItem _elevateItem;
 
     public TrayController(AppController controller, Action showWindow, Action toggleWindow, string iconPath)
     {
@@ -37,27 +36,11 @@ public sealed class TrayController : IDisposable
         _tunItem = new ToggleMenuFlyoutItem { Text = "TUN 模式" };
         _tunItem.Click += (_, _) => Safe(() => _controller.ToggleTun(_tunItem.IsChecked));
 
-        _elevateItem = Item("以管理员身份重启", () =>
-        {
-            if (Elevation.RelaunchElevated()) _controller.Exit();
-        });
-
         _silentStartItem = new ToggleMenuFlyoutItem { Text = "静默启动" };
         _silentStartItem.Click += (_, _) => Safe(() => _controller.ToggleSilentStart(_silentStartItem.IsChecked));
 
         _autoStartItem = new ToggleMenuFlyoutItem { Text = "开机自启（静默）" };
-        _autoStartItem.Click += (_, _) => Safe(() =>
-        {
-            var ok = _autoStartItem.IsChecked
-                ? AutoStart.Register(Environment.ProcessPath ?? "")
-                : AutoStart.Unregister();
-            if (!ok)
-            {
-                _autoStartItem.IsChecked = !_autoStartItem.IsChecked;
-                _controller.Notify("修改开机自启失败，注册计划任务需要管理员权限");
-            }
-            Refresh();
-        });
+        _autoStartItem.Click += (_, _) => Safe(() => _controller.ToggleAutoStart(_autoStartItem.IsChecked));
 
         _menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
         _menu.Opening += (_, _) => RebuildProfiles();
@@ -70,7 +53,6 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(restartItem);
         _menu.Items.Add(new MenuFlyoutSeparator());
         _menu.Items.Add(dataItem);
-        _menu.Items.Add(_elevateItem);
         _menu.Items.Add(_silentStartItem);
         _menu.Items.Add(_autoStartItem);
         _menu.Items.Add(new MenuFlyoutSeparator());
@@ -93,7 +75,6 @@ public sealed class TrayController : IDisposable
         _tunItem.IsChecked = settings.TunEnabled;
         _silentStartItem.IsChecked = settings.SilentStart;
         try { _autoStartItem.IsChecked = AutoStart.IsRegistered(); } catch { }
-        _elevateItem.Visibility = Elevation.IsElevated ? Visibility.Collapsed : Visibility.Visible;
         try { _icon.Tooltip = _controller.IsCoreRunning ? "Clashui — 核心运行中" : "Clashui — 核心未运行"; } catch { }
         RebuildProfiles();
     }

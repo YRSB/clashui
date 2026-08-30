@@ -43,6 +43,8 @@ public partial class App : Application
 
             // 静默启动时不创建主窗口（连 HWND 都不存在，杜绝窗口闪烁），首次点托盘再创建
             if (!StartSilent) ShowMainWindow();
+            // 提权重启场景：补做上一次实例挂起的提权操作（如开机自启注册）
+            Controller.ProcessPendingOperations();
             Controller.StartOnLaunch();
         }
         catch (Exception ex)

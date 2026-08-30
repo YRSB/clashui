@@ -138,6 +138,62 @@ public sealed class AppController
         SettingsStore.Save(Settings);
     }
 
+    /// 开机自启开关。权限不足时不弹错误了事，而是像 TUN 开关一样自动提权重启，
+    /// 重启后由 ProcessPendingOperations 补做注册/注销。
+    public void ToggleAutoStart(bool enable)
+    {
+        // 任务不存在时取消勾选视为无操作，避免对缺失任务注销失败反而触发提权
+        if (!enable && !AutoStart.IsRegistered())
+        {
+            RaiseStateChanged();
+            return;
+        }
+
+        var ok = enable ? AutoStart.Register(Environment.ProcessPath ?? "") : AutoStart.Unregister();
+        if (ok)
+        {
+            RaiseStateChanged();
+            return;
+        }
+
+        if (!Elevation.IsElevated)
+        {
+            Settings.PendingAutoStart = enable;
+            SettingsStore.Save(Settings);
+            Notify("修改开机自启需要管理员权限，正在以管理员身份重启…");
+            if (Elevation.RelaunchElevated())
+            {
+                Exit();
+                return;
+            }
+            Settings.PendingAutoStart = null;
+            SettingsStore.Save(Settings);
+            Notify("已取消提权，开机自启未更改");
+            RaiseStateChanged();
+            return;
+        }
+
+        Notify("修改开机自启失败，详情见日志");
+        RaiseStateChanged();
+    }
+
+    /// 提权重启后补做挂起的提权操作（当前仅开机自启），随后清空标记。
+    public void ProcessPendingOperations()
+    {
+        var pending = Settings.PendingAutoStart;
+        if (pending is null) return;
+        Settings.PendingAutoStart = null;
+        SettingsStore.Save(Settings);
+
+        var ok = pending.Value
+            ? AutoStart.Register(Environment.ProcessPath ?? "")
+            : AutoStart.Unregister();
+        Notify(ok
+            ? $"开机自启已{(pending.Value ? "开启" : "关闭")}"
+            : "开机自启设置失败，详情见日志");
+        RaiseStateChanged();
+    }
+
     public void OpenDataFolder() => OpenFolder(AppPaths.Root);
 
     public void OpenProfilesFolder()
