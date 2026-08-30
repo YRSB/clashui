@@ -64,6 +64,9 @@ public sealed class AppController
         Settings = SettingsStore.Load();
         Settings.ActiveProfile = ConfigComposer.ResolveProfile(Settings.ActiveProfile, createDefault: true);
         SettingsStore.Save(Settings);
+        // 崩溃会残留指向死端口的系统代理，开机直接断网（正常退出时已清）。
+        // 只清指向自己端口的，指向其它端口的可能是用户的其他代理工具；核心就绪后 OnCoreReady 会重设
+        if (Settings.SystemProxyEnabled && SystemProxy.IsSetTo(Settings.MixedPort)) SystemProxy.Clear();
         StartProfileWatcher();
     }
 

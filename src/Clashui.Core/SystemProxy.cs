@@ -26,6 +26,15 @@ public static partial class SystemProxy
         NotifyShell();
     }
 
+    /// 系统代理当前是否指向本应用的 127.0.0.1:<paramref name="mixedPort"/>（用于识别崩溃残留）。
+    public static bool IsSetTo(int mixedPort)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
+        if (key is null) return false;
+        if (key.GetValue("ProxyEnable") is not 1) return false;
+        return key.GetValue("ProxyServer") as string == $"127.0.0.1:{mixedPort}";
+    }
+
     public static void Clear()
     {
         using var key = Registry.CurrentUser.OpenSubKey(KeyPath, writable: true);
