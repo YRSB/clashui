@@ -101,7 +101,16 @@ public sealed class AppController
         if (!Elevation.IsElevated)
         {
             Notify("切换 TUN 模式需要管理员权限，正在以管理员身份重启…");
-            if (Elevation.RelaunchElevated()) Exit();
+            if (Elevation.RelaunchElevated())
+            {
+                Exit();
+                return;
+            }
+            // 用户取消 UAC：回滚开关，避免「托盘显示已开、实际未生效」且下次启动反复弹 UAC
+            Settings.TunEnabled = !enabled;
+            SettingsStore.Save(Settings);
+            Notify("已取消提权，TUN 模式未更改");
+            RaiseStateChanged();
             return;
         }
         // TUN 变更走完整重启，确保 wintun 设备/路由正确重建
