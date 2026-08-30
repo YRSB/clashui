@@ -24,6 +24,9 @@
          组件（自包含发布多出约 45MB 的 onnxruntime/DirectML 等）。按需引用子包，
          版本对齐 2.4.0 伞包当时的解析结果（Runtime 伞包锁 [2.4.0]） -->
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.6" />
+    <!-- WinUI 2.3.6 传递依赖 IE 2.1.3，但 Runtime 2.4.0 的组件一致性校验（框架依赖模式强制）
+         要求 2.1.6，显式钉住（同为伞包 2.4.0 的解析结果） -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.1.6" />
     <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="2.1.0" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.4.0" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.*" />
