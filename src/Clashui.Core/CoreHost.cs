@@ -90,6 +90,8 @@ public sealed class CoreHost : IDisposable
 
     private void OnExited()
     {
+        // 先捕获再置空（同 Stop()），退出码只能从局部变量读——字段已空
+        var proc = _process;
         _process = null;
         SetState(CoreState.Stopped);
 
@@ -103,7 +105,7 @@ public sealed class CoreHost : IDisposable
 
         var exe = _lastExe;
         var args = _lastArgs;
-        AppLog.Error($"mihomo 异常退出（ExitCode={TryExitCode()?.ToString() ?? "未知"}），3 秒后自动重启");
+        AppLog.Error($"mihomo 异常退出（ExitCode={TryExitCode(proc)?.ToString() ?? "未知"}），3 秒后自动重启");
         _ = Task.Delay(3000).ContinueWith(_ =>
         {
             if (_userStop || State != CoreState.Stopped) return;
@@ -116,9 +118,9 @@ public sealed class CoreHost : IDisposable
         }, TaskScheduler.Default);
     }
 
-    private int? TryExitCode()
+    private static int? TryExitCode(Process? proc)
     {
-        try { return _process?.ExitCode; }
+        try { return proc?.ExitCode; }
         catch { return null; }
     }
 
