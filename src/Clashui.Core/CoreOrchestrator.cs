@@ -56,7 +56,6 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
             CrashLoop?.Invoke(c);
             Notify("核心连续异常退出，请查看数据目录 core.log（订阅 provider 拉取失败时会出现）");
         };
-        _runtime.Output += line => Notification?.Invoke(line);
         _watcher.Changed += OnProfileFileMaybeChanged;
     }
 
