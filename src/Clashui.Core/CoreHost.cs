@@ -5,7 +5,8 @@ namespace Clashui.Core;
 public enum CoreState { Stopped, Starting, Running }
 
 /// 托管 mihomo 子进程：启动 / 停止 / 崩溃自动重启，stdout/stderr 落盘并转发事件。
-public sealed class CoreHost : IDisposable
+[Obsolete("Use CoreRuntime", true)]
+internal sealed class CoreHost : IDisposable
 {
     private Process? _process;
     private bool _userStop;

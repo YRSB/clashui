@@ -6,7 +6,8 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 {
     private readonly ISettingsStore _settingsStore;
     private readonly IConfigComposer _composer;
-    private readonly ICoreRuntime _runtime;
+    private readonly CoreRuntime? _runtime;
+    private readonly ICoreRuntime? _legacyRuntime;
     private readonly IProfileWatcher _watcher;
     private readonly ITimeSource _time;
     private readonly Func<string, string, IMihomoApiClient> _apiFactory;
@@ -15,17 +16,19 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
     private IMihomoApiClient? _api;
     private bool _disposed;
 
+    private CoreState CurrentState => _runtime?.State ?? _legacyRuntime?.State ?? CoreState.Stopped;
+
     public AppSettings Settings { get; private set; }
     public IConfigComposer Composer => _composer;
     public AppState State => new(
-        _runtime.State,
+        CurrentState,
         Settings.ActiveProfile,
         Settings.SystemProxyEnabled,
         Settings.TunEnabled,
         Settings.ControllerAddr,
         GetProfiles());
 
-    public bool IsCoreRunning => _runtime.State == CoreState.Running;
+    public bool IsCoreRunning => CurrentState == CoreState.Running;
 
     public event Action<AppState>? StateChanged;
     public event Action<string>? Notification;
@@ -34,7 +37,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
     public CoreOrchestrator(
         ISettingsStore settingsStore,
         IConfigComposer composer,
-        ICoreRuntime runtime,
+        CoreRuntime runtime,
         IProfileWatcher watcher,
         ITimeSource time,
         Func<string, string, IMihomoApiClient>? apiFactory = null)
@@ -49,6 +52,32 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 
         _runtime.StateChanged += OnRuntimeStateChanged;
         _runtime.CrashLoop += c =>
+        {
+            CrashLoop?.Invoke(c);
+            Notify("核心连续异常退出，请查看数据目录 core.log（订阅 provider 拉取失败时会出现）");
+        };
+        _runtime.Output += line => Notification?.Invoke(line);
+        _watcher.Changed += OnProfileFileMaybeChanged;
+    }
+
+    public CoreOrchestrator(
+        ISettingsStore settingsStore,
+        IConfigComposer composer,
+        ICoreRuntime legacyRuntime,
+        IProfileWatcher watcher,
+        ITimeSource time,
+        Func<string, string, IMihomoApiClient>? apiFactory = null)
+    {
+        _settingsStore = settingsStore;
+        _composer = composer;
+        _legacyRuntime = legacyRuntime;
+        _watcher = watcher;
+        _time = time;
+        _apiFactory = apiFactory ?? ((addr, secret) => new MihomoApiClient(addr, secret));
+        Settings = _settingsStore.Load();
+
+        _legacyRuntime.StateChanged += OnLegacyStateChanged;
+        _legacyRuntime.CrashLoop += c =>
         {
             CrashLoop?.Invoke(c);
             Notify("核心连续异常退出，请查看数据目录 core.log（订阅 provider 拉取失败时会出现）");
@@ -79,7 +108,14 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 
     private void OnRuntimeStateChanged(CoreState state)
     {
-        if (state == CoreState.Starting) _ = ProbeUntilHealthyAsync();
+        if (state == CoreState.Running) OnCoreReady();
+        if (state == CoreState.Stopped && Settings.SystemProxyEnabled)
+            SystemProxy.Clear();
+        RaiseStateChanged();
+    }
+
+    private void OnLegacyStateChanged(CoreState state)
+    {
         if (state == CoreState.Running) OnCoreReady();
         if (state == CoreState.Stopped && Settings.SystemProxyEnabled)
             SystemProxy.Clear();
@@ -113,8 +149,39 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
             var configPath = _composer.Compose(Settings);
             _api?.Dispose();
             _api = _apiFactory(Settings.ControllerAddr, Settings.Secret);
-            _runtime.Start(exe, $"-d \"{AppPaths.Root}\" -f \"{configPath}\"");
-            return OrchestratorResult.Success;
+            if (_runtime is not null)
+            {
+                var launch = new CoreLaunch(exe, $"-d \"{AppPaths.Root}\" -f \"{configPath}\"");
+                var endpoint = new CoreEndpoint(Settings.ControllerAddr, Settings.Secret);
+                var outcome = await _runtime.StartAsync(launch, endpoint);
+                if (!outcome.Ok)
+                {
+                    if (outcome.Failure == CoreFailure.AlreadyRunning) return OrchestratorResult.Fail("AlreadyRunning");
+                    if (outcome.Failure == CoreFailure.ExeNotFound)
+                    {
+                        var msg = outcome.Cause ?? error ?? "exe not found";
+                        Notify(msg);
+                        return OrchestratorResult.Fail(msg);
+                    }
+                    if (outcome.Failure == CoreFailure.StartFailed)
+                    {
+                        var msg = outcome.Cause ?? "StartFailed";
+                        Notify($"启动核心失败：{msg}");
+                        return OrchestratorResult.Fail(msg);
+                    }
+                    var fallback = outcome.Cause ?? outcome.Failure.ToString();
+                    if (outcome.Failure == CoreFailure.ProbeTimeout) Notify("核心健康检查超时，详情见数据目录 core.log");
+                    else if (outcome.Failure == CoreFailure.Cancelled) Notify("启动已取消");
+                    else Notify(fallback);
+                    return OrchestratorResult.Fail(fallback);
+                }
+                return OrchestratorResult.Success;
+            }
+            else
+            {
+                _legacyRuntime!.Start(exe, $"-d \"{AppPaths.Root}\" -f \"{configPath}\"");
+                return OrchestratorResult.Success;
+            }
         }
         catch (Exception ex)
         {
@@ -126,7 +193,8 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 
     public async Task<OrchestratorResult> RestartAsync()
     {
-        _runtime.Stop();
+        if (_runtime is not null) await _runtime.StopAsync();
+        else _legacyRuntime!.Stop();
         return await StartAsync();
     }
 
@@ -237,31 +305,6 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         }
     }
 
-    private async Task ProbeUntilHealthyAsync()
-    {
-        var api = _api;
-        if (api is null) return;
-        for (var i = 0; i < 50; i++)
-        {
-            await _time.Delay(300, CancellationToken.None);
-            if (_runtime.State != CoreState.Starting) return;
-            try
-            {
-                var version = await api.GetVersionAsync();
-                if (version is not null)
-                {
-                    _runtime.MarkRunning();
-                    Notify($"mihomo 已启动（{version}）");
-                    return;
-                }
-            }
-            catch
-            {
-            }
-        }
-        Notify("核心健康检查超时，详情见数据目录 core.log");
-    }
-
     private (string? exe, string? error) ResolveCoreExe()
     {
         var exe = CoreLocator.Resolve(Settings.MihomoPath);
@@ -303,7 +346,14 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         _watcher.Dispose();
         _debounceCts?.Cancel();
         if (Settings.SystemProxyEnabled) SystemProxy.Clear();
-        _runtime.Stop();
+        if (_runtime is not null)
+        {
+            try { _runtime.StopAsync().GetAwaiter().GetResult(); } catch { }
+        }
+        else
+        {
+            try { _legacyRuntime!.Stop(); } catch { }
+        }
     }
 
     public void Dispose()
@@ -314,7 +364,8 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         _debounceCts?.Dispose();
         _watcher.Dispose();
         _api?.Dispose();
-        _runtime.Dispose();
+        if (_runtime is not null) _runtime.Dispose();
+        else _legacyRuntime?.Dispose();
         _reloadGate.Dispose();
     }
 

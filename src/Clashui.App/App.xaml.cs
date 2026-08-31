@@ -39,7 +39,7 @@ public partial class App : Application
         {
             var store = new FileSettingsStore();
             var composer = new DefaultConfigComposer();
-            var runtime = new MihomoCoreRuntime();
+            var runtime = new CoreRuntime();
             var watcher = new FileProfileWatcher();
             var time = new SystemTimeSource();
             Orchestrator = new CoreOrchestrator(store, composer, runtime, watcher, time);

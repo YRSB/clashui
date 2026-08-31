@@ -7,28 +7,36 @@ public interface ICoreRuntime : IDisposable
     event Action<int> CrashLoop;
     void Start(string exe, string args);
     void Stop();
-    void MarkRunning();
 }
 
 public sealed class MihomoCoreRuntime : ICoreRuntime
 {
-    private readonly CoreHost _host = new();
+    private readonly CoreRuntime _runtime;
+    private readonly string _controllerAddr;
+    private readonly string _secret;
 
-    public CoreState State => _host.State;
+    public CoreState State => _runtime.State;
 
     public event Action<CoreState>? StateChanged;
     public event Action<int>? CrashLoop;
 
-    public MihomoCoreRuntime()
+    public MihomoCoreRuntime(string controllerAddr = "127.0.0.1:9090", string secret = "", CoreRuntime? runtime = null)
     {
-        _host.StateChanged += s => StateChanged?.Invoke(s);
-        _host.CrashLoop += c => CrashLoop?.Invoke(c);
+        _controllerAddr = controllerAddr;
+        _secret = secret;
+        _runtime = runtime ?? new CoreRuntime();
+        _runtime.StateChanged += s => StateChanged?.Invoke(s);
+        _runtime.CrashLoop += c => CrashLoop?.Invoke(c);
     }
 
-    public void Start(string exe, string args) => _host.Start(exe, args);
-    public void Stop() => _host.Stop();
-    public void MarkRunning() => _host.MarkRunning();
-    public void Dispose() => _host.Dispose();
+    public void Start(string exe, string args)
+    {
+        var launch = new CoreLaunch(exe, args);
+        var endpoint = new CoreEndpoint(_controllerAddr, _secret);
+        Task.Run(() => _runtime.StartAsync(launch, endpoint)).GetAwaiter().GetResult();
+    }
+    public void Stop() => Task.Run(() => _runtime.StopAsync()).GetAwaiter().GetResult();
+    public void Dispose() => _runtime.Dispose();
 }
 
 public sealed class FakeCoreRuntime : ICoreRuntime
@@ -42,7 +50,6 @@ public sealed class FakeCoreRuntime : ICoreRuntime
 
     public void Start(string exe, string args) => SetState(CoreState.Starting);
     public void Stop() => SetState(CoreState.Stopped);
-    public void MarkRunning() => SetState(CoreState.Running);
 
     public void SimulateCrash(int consecutiveCount = 1)
     {
