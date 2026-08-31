@@ -1,6 +1,6 @@
-using Clashui.App.Services;
 using Clashui.Core;
 using Microsoft.UI;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -13,21 +13,20 @@ namespace Clashui.App;
 
 public sealed partial class MainWindow : Window
 {
-    private readonly AppController _controller;
+    private readonly CoreOrchestrator _orch;
+    private readonly DispatcherQueue _dispatcher;
     private bool _navigated;
     private bool _panelReady;
 
-    public MainWindow(AppController controller)
+    public MainWindow(CoreOrchestrator orch)
     {
-        _controller = controller;
+        _orch = orch;
+        _dispatcher = DispatcherQueue.GetForCurrentThread();
         InitializeComponent();
         Title = "Clashui";
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"));
-
-        // 官方 TitleBar 控件（WinAppSDK 1.7+）：ExtendsContentIntoTitleBar + SetTitleBar 两步标准流程
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        // 触屏友好：标题栏与系统按钮改用 48px 高度（须在 ExtendsContentIntoTitleBar 之后设置）
         try
         {
             AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
@@ -42,24 +41,17 @@ public sealed partial class MainWindow : Window
         };
         SystemBackdrop = new MicaBackdrop();
         UpdateCaptionButtonColors();
-        // Window 没有 ActualTheme，从根元素取主题
         ((FrameworkElement)Content).ActualThemeChanged += (_, _) => UpdateCaptionButtonColors();
-
-        // 还原（取消最大化）时的默认尺寸；启动即最大化
         AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1120, 760));
         if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
             presenter.Maximize();
-
-        // 关闭 = 隐藏到托盘并让面板进入低内存模式；真正退出走托盘菜单
         AppWindow.Closing += (_, e) =>
         {
             e.Cancel = true;
             HideToTray();
         };
-
-        _controller.StateChanged += OnStateChanged;
+        _orch.StateChanged += _ => _dispatcher.TryEnqueue(OnStateChanged);
         OnStateChanged();
-        // WinUI 的 Window 没有 Loaded 事件，挂到 WebView2 元素上
         Panel.Loaded += async (_, _) => await TryNavigateAsync();
     }
 
@@ -70,16 +62,12 @@ public sealed partial class MainWindow : Window
         SetPanelMemoryTarget(low: false);
     }
 
-    /// 隐藏到托盘并让面板进入低内存模式（关闭按钮与托盘左键切换共用）。
     public void HideToTray()
     {
         AppWindow.Hide();
         SetPanelMemoryTarget(low: true);
     }
 
-    /// 隐藏到托盘时把 WebView2 切到低内存目标（引擎收缩缓存、必要时换出内存，
-    /// 脚本与 WebSocket 继续运行）；显示时恢复正常。官方文档要求二选一，
-    /// 不要与 TrySuspendAsync 混用。
     private void SetPanelMemoryTarget(bool low)
     {
         if (!_panelReady) return;
@@ -92,12 +80,10 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            // 旧版 WebView2 Runtime 可能没有该 API，降级为仅不生效
             AppLog.Error("调整面板内存目标失败", ex);
         }
     }
 
-    /// 标题按钮随主题着色（延伸进标题栏后系统默认底色会露馅）
     private void UpdateCaptionButtonColors()
     {
         var dark = ((FrameworkElement)Content).ActualTheme == ElementTheme.Dark;
@@ -119,15 +105,15 @@ public sealed partial class MainWindow : Window
 
     private void OnStateChanged()
     {
-        var running = _controller.IsCoreRunning;
+        var running = _orch.IsCoreRunning;
         if (running)
         {
             Banner.IsOpen = false;
             _ = TryNavigateAsync();
             return;
         }
-
-        var hasExe = CoreLocator.Resolve(_controller.Settings.MihomoPath) is not null;
+        var settings = _orch.Settings;
+        var hasExe = CoreLocator.Resolve(settings.MihomoPath) is not null;
         Banner.IsOpen = true;
         Banner.Title = hasExe ? "核心未运行，详情见日志" : "未找到 mihomo";
         Banner.Message = hasExe ? "可从托盘菜单重启核心" : $"请将其放入数据目录：{AppPaths.Root}";
@@ -136,25 +122,22 @@ public sealed partial class MainWindow : Window
     private async Task TryNavigateAsync()
     {
         if (_navigated) return;
-        // 等核心就绪（首次启动要等 mihomo 下载 external-ui 面板，稍慢）
-        for (var i = 0; i < 60 && !_controller.IsCoreRunning; i++) await Task.Delay(250);
-        if (!_controller.IsCoreRunning || _navigated) return;
+        for (var i = 0; i < 60 && !_orch.IsCoreRunning; i++) await Task.Delay(250);
+        if (!_orch.IsCoreRunning || _navigated) return;
         _navigated = true;
         try
         {
             var options = new CoreWebView2EnvironmentOptions
             {
-                // 面板用不上跟踪防护，关闭可省内存与 CPU
                 EnableTrackingPrevention = false,
                 AdditionalBrowserArguments = "--renderer-process-limit=1",
             };
-            // WinUI3 投影只有 CreateWithOptionsAsync（browserExecutableFolder 传 null 用默认值）；
-            // 用户数据目录指到数据目录，避免缓存在 exe 旁越积越大
             var env = await CoreWebView2Environment.CreateWithOptionsAsync(
                 null, AppPaths.WebView2DataDir, options);
             await Panel.EnsureCoreWebView2Async(env);
             _panelReady = true;
-            Panel.Source = new Uri(_controller.DashboardUrl);
+            var url = _orch.Composer.DashboardUrlFor(_orch.Settings);
+            Panel.Source = new Uri(url);
         }
         catch (Exception ex)
         {
@@ -166,5 +149,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OpenDataFolder_Click(object sender, RoutedEventArgs e) => _controller.OpenDataFolder();
+    internal void ShowNotification(string message)
+    {
+        Banner.IsOpen = true;
+        Banner.Title = message;
+        Banner.Message = "";
+    }
+
+    private void OpenDataFolder_Click(object sender, RoutedEventArgs e) => _orch.OpenDataFolder();
 }

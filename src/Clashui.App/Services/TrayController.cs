@@ -1,14 +1,16 @@
 using Clashui.Core;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using WinUIEx;
 
 namespace Clashui.App.Services;
 
-/// 托盘图标与右键菜单（WinUIEx.TrayIcon）；左键点击切换面板显示/隐藏。
 public sealed class TrayController : IDisposable
 {
-    private readonly AppController _controller;
+    private readonly CoreOrchestrator _orch;
+    private readonly PolicyOps _policy;
+    private readonly DispatcherQueue _dispatcher;
     private readonly Action _showWindow;
     private readonly Action _toggleWindow;
     private readonly string _assetsDir;
@@ -20,29 +22,31 @@ public sealed class TrayController : IDisposable
     private readonly ToggleMenuFlyoutItem _autoStartItem;
     private readonly MenuFlyoutSubItem _profilesItem = new() { Text = "配置文件" };
 
-    public TrayController(AppController controller, Action showWindow, Action toggleWindow, string iconPath)
+    public TrayController(CoreOrchestrator orch, PolicyOps policy, Action showWindow, Action toggleWindow, string iconPath)
     {
-        _controller = controller;
+        _orch = orch;
+        _policy = policy;
         _showWindow = showWindow;
         _toggleWindow = toggleWindow;
         _assetsDir = Path.GetDirectoryName(iconPath) ?? AppContext.BaseDirectory;
+        _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         var showItem = Item("显示面板", () => _showWindow());
-        var restartItem = Item("重启核心", () => _ = _controller.RestartCoreAsync());
-        var dataItem = Item("打开数据目录", _controller.OpenDataFolder);
-        var exitItem = Item("退出", _controller.Exit);
+        var restartItem = Item("重启核心", () => _ = _orch.RestartAsync());
+        var dataItem = Item("打开数据目录", () => _orch.OpenDataFolder());
+        var exitItem = Item("退出", () => ExitOrchestrator());
 
         _sysProxyItem = new ToggleMenuFlyoutItem { Text = "系统代理" };
-        _sysProxyItem.Click += (_, _) => Safe(() => _controller.ToggleSystemProxy(_sysProxyItem.IsChecked));
+        _sysProxyItem.Click += (_, _) => Safe(() => HandleSystemProxyToggle(_sysProxyItem.IsChecked));
 
         _tunItem = new ToggleMenuFlyoutItem { Text = "TUN 模式" };
-        _tunItem.Click += (_, _) => Safe(() => _controller.ToggleTun(_tunItem.IsChecked));
+        _tunItem.Click += (_, _) => Safe(() => HandleTunToggle(_tunItem.IsChecked));
 
         _silentStartItem = new ToggleMenuFlyoutItem { Text = "静默启动" };
-        _silentStartItem.Click += (_, _) => Safe(() => _controller.ToggleSilentStart(_silentStartItem.IsChecked));
+        _silentStartItem.Click += (_, _) => Safe(() => { _policy.SetSilentStart(_silentStartItem.IsChecked); _dispatcher.TryEnqueue(Refresh); });
 
         _autoStartItem = new ToggleMenuFlyoutItem { Text = "开机自启（静默）" };
-        _autoStartItem.Click += (_, _) => Safe(() => _controller.ToggleAutoStart(_autoStartItem.IsChecked));
+        _autoStartItem.Click += (_, _) => Safe(() => HandleAutoStartToggle(_autoStartItem.IsChecked));
 
         _menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
         _menu.Opening += (_, _) => RebuildProfiles();
@@ -61,29 +65,87 @@ public sealed class TrayController : IDisposable
         _menu.Items.Add(exitItem);
 
         _icon = new TrayIcon(1, iconPath, "Clashui");
-        // 裸 TrayIcon 不会自动入托盘：IsVisible 默认 false，必须显式开启
         _icon.IsVisible = true;
         _icon.Selected += (_, _) => Safe(_toggleWindow);
         _icon.ContextMenu += (_, e) => e.Flyout = _menu;
 
-        _controller.StateChanged += Refresh;
+        _orch.StateChanged += _ => _dispatcher.TryEnqueue(Refresh);
         Refresh();
+    }
+
+    private void ExitOrchestrator()
+    {
+        _icon.Dispose();
+        _orch.Stop();
+        _orch.Dispose();
+        Environment.Exit(0);
+    }
+
+    private void Notify(string message) => App.ShowGlobalNotification(message);
+
+    private void HandleTunToggle(bool enabled)
+    {
+        var r = _policy.SetTun(enabled);
+        if (r.Kind == PolicyResultKind.Ok)
+        {
+            _ = _orch.RestartAsync();
+        }
+        else if (r.Kind == PolicyResultKind.NeedsElevation)
+        {
+            Notify("切换 TUN 模式需要管理员权限，正在以管理员身份重启…");
+            ExitOrchestrator();
+            return;
+        }
+        else if (r.Kind == PolicyResultKind.CancelledByUser)
+        {
+            Notify("已取消提权，TUN 模式未更改");
+        }
+        else if (r.Kind == PolicyResultKind.Failed)
+        {
+            Notify($"切换 TUN 失败：{r.Cause}");
+        }
+        _dispatcher.TryEnqueue(Refresh);
+    }
+
+    private void HandleSystemProxyToggle(bool enabled)
+    {
+        var s = _orch.Settings;
+        var r = _policy.SetSystemProxy(enabled, _orch.IsCoreRunning, s.MixedPort);
+        if (r.Kind == PolicyResultKind.Failed)
+            Notify($"切换系统代理失败：{r.Cause}");
+        _dispatcher.TryEnqueue(Refresh);
+    }
+
+    private void HandleAutoStartToggle(bool enable)
+    {
+        var r = _policy.SetAutoStart(enable, Environment.ProcessPath ?? "");
+        if (r.Kind == PolicyResultKind.NeedsElevation)
+        {
+            Notify("修改开机自启需要管理员权限，正在以管理员身份重启…");
+            ExitOrchestrator();
+            return;
+        }
+        else if (r.Kind == PolicyResultKind.CancelledByUser)
+            Notify("已取消提权，开机自启未更改");
+        else if (r.Kind == PolicyResultKind.Failed)
+            Notify("修改开机自启失败，详情见日志");
+        _dispatcher.TryEnqueue(Refresh);
     }
 
     public void Refresh()
     {
-        var settings = _controller.Settings;
+        var settings = _orch.Settings;
         _sysProxyItem.IsChecked = settings.SystemProxyEnabled;
         _tunItem.IsChecked = settings.TunEnabled;
         _silentStartItem.IsChecked = settings.SilentStart;
-        try { _autoStartItem.IsChecked = AutoStart.IsRegistered(); } catch { }
+        try { _autoStartItem.IsChecked = _policy.IsAutoStartRegistered(); } catch (Exception ex) { AppLog.Error("读取开机自启状态失败", ex); }
 
-        // 状态可视化：灰化=核心未运行，绿点=系统代理，橙点=TUN（与系统代理同开时优先显示 TUN）
-        var iconFile = !_controller.IsCoreRunning ? "app-off.ico"
+        var isRunning = _orch.IsCoreRunning;
+        var iconFile = !isRunning ? "app-off.ico"
             : settings.TunEnabled ? "app-tun.ico"
             : settings.SystemProxyEnabled ? "app-proxy.ico"
             : "app.ico";
-        var tooltip = !_controller.IsCoreRunning ? "Clashui — 核心未运行"
+        var tooltip = !isRunning ? "Clashui — 核心未运行"
             : settings.TunEnabled ? "Clashui — 核心运行中（TUN）"
             : settings.SystemProxyEnabled ? "Clashui — 核心运行中（系统代理）"
             : "Clashui — 核心运行中";
@@ -99,12 +161,11 @@ public sealed class TrayController : IDisposable
         RebuildProfiles();
     }
 
-    /// 重建「配置文件」子菜单：列出 profiles 目录下的 YAML，勾选当前激活项。
     private void RebuildProfiles()
     {
         _profilesItem.Items.Clear();
-        var active = _controller.Settings.ActiveProfile;
-        var profiles = _controller.GetProfiles();
+        var active = _orch.Settings.ActiveProfile;
+        var profiles = _orch.GetProfiles();
 
         if (profiles.Count == 0)
         {
@@ -122,22 +183,17 @@ public sealed class TrayController : IDisposable
                 Text = Path.GetFileName(path),
                 IsChecked = string.Equals(path, active, StringComparison.OrdinalIgnoreCase),
             };
-            item.Click += (_, _) => _ = _controller.SwitchProfileAsync(path);
+            item.Click += (_, _) => _ = _orch.SwitchProfileAsync(path);
             _profilesItem.Items.Add(item);
         }
 
         _profilesItem.Items.Add(new MenuFlyoutSeparator());
-        _profilesItem.Items.Add(Item("打开 profiles 目录", _controller.OpenProfilesFolder));
+        _profilesItem.Items.Add(Item("打开 profiles 目录", () => _orch.OpenProfilesFolder()));
     }
 
     private static void Safe(Action action)
     {
-        try { action(); }
-        catch (Exception ex)
-        {
-            // 托盘点击链路上的未处理异常会让 WinUI 进程直接退出，必须兜底
-            AppLog.Error("托盘操作失败", ex);
-        }
+        try { action(); } catch (Exception ex) { AppLog.Error("托盘操作失败", ex); }
     }
 
     private static MenuFlyoutItem Item(string text, Action onClick)
