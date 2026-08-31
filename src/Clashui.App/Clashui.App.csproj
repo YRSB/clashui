@@ -17,6 +17,7 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <EnableMsixTooling>true</EnableMsixTooling>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SatelliteResourceLanguages>zh-Hans;zh-CN</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
@@ -51,6 +52,15 @@
        拦不住，发布后显式删除兜底 -->
   <Target Name="RemoveNativePdbFromPublish" AfterTargets="Publish">
     <Delete Files="$(PublishDir)$(TargetName).pdb" Condition="Exists('$(PublishDir)$(TargetName).pdb')" />
+  </Target>
+
+  <!-- 仅保留中文 MUI：SatelliteResourceLanguages 对 WindowsAppSDK 的原生 mui 无效，发布后手动裁剪 -->
+  <Target Name="TrimNonChineseMuis" AfterTargets="Publish" Condition="Exists('$(PublishDir)')">
+    <ItemGroup>
+      <_PublishDir Include="$([System.IO.Directory]::GetDirectories('$(PublishDir)'))" />
+      <_ToRemove Include="@(_PublishDir)" Condition="'%(_PublishDir.Filename)' != 'Assets' and '%(_PublishDir.Filename)' != 'Microsoft.UI.Xaml' and '%(_PublishDir.Filename)' != 'zh-CN' and '%(_PublishDir.Filename)' != 'zh-TW' and '%(_PublishDir.Filename)' != 'zh-Hans'" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_ToRemove)" Condition="'@(_ToRemove)' != ''" />
   </Target>
 
 </Project>

@@ -15,6 +15,8 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
     private CancellationTokenSource? _debounceCts;
     private IMihomoApiClient? _api;
     private bool _disposed;
+    private IReadOnlyList<string>? _profilesCache;
+    private readonly Lock _profilesGate = new();
 
     private CoreState CurrentState => _runtime?.State ?? _legacyRuntime?.State ?? CoreState.Stopped;
 
@@ -213,28 +215,38 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         return await ReloadCoreConfigAsync($"已切换到 {Path.GetFileName(profilePath)}（热重载）", restartOnFailure: true);
     }
 
-    public Task<OrchestratorResult> ReloadAsync() => ReloadCoreConfigAsync("已热重载", restartOnFailure: false);
-
     public IReadOnlyList<string> GetProfiles()
     {
-        try
+        lock (_profilesGate)
         {
-            return Directory.EnumerateFiles(AppPaths.ProfilesDir)
-                .Where(f => f.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
-                            || f.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            if (_profilesCache is not null) return _profilesCache;
+            try
+            {
+                var list = Directory.EnumerateFiles(AppPaths.ProfilesDir)
+                    .Where(f => f.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
+                                || f.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                _profilesCache = list;
+                return list;
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
         }
-        catch
-        {
-            return Array.Empty<string>();
-        }
+    }
+
+    private void InvalidateProfilesCache()
+    {
+        lock (_profilesGate) _profilesCache = null;
     }
 
     private void OnProfileFileMaybeChanged(string fullPath)
     {
         try
         {
+            InvalidateProfilesCache();
             if (!fullPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
                 && !fullPath.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)) return;
             if (!string.Equals(fullPath, Settings.ActiveProfile, StringComparison.OrdinalIgnoreCase)) return;

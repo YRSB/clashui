@@ -16,6 +16,6 @@ public sealed record AppState
         SystemProxyEnabled = systemProxyEnabled;
         TunEnabled = tunEnabled;
         ControllerAddr = controllerAddr;
-        Profiles = profiles.ToList().AsReadOnly();
+        Profiles = profiles;
     }
 }

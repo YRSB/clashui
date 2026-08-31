@@ -1,5 +1,5 @@
+using System.Text;
 using YamlDotNet.RepresentationModel;
-
 namespace Clashui.Core;
 
 /// <summary>
@@ -28,7 +28,6 @@ rules:
         return fallback;
     }
 
-    /// 合成运行时配置并写入数据目录，返回配置文件路径。
     public static string Compose(AppSettings settings)
     {
         var root = LoadRoot(ResolveProfile(settings.ActiveProfile, createDefault: true));
@@ -43,11 +42,10 @@ rules:
         if (settings.TunEnabled && !root.Children.ContainsKey("dns"))
             SetNode(root, "dns", BuildDns());
 
-        using var writer = new StringWriter();
         var stream = new YamlStream();
         stream.Documents.Add(new YamlDocument(root));
-        stream.Save(writer);
-        File.WriteAllText(AppPaths.RuntimeConfigFile, writer.ToString());
+        using var writer = new StreamWriter(AppPaths.RuntimeConfigFile, false, new UTF8Encoding(false));
+        stream.Save(writer, false);
         return AppPaths.RuntimeConfigFile;
     }
 

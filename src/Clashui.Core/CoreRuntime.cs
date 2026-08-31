@@ -197,7 +197,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
 
     private void OnProcessOutput(string line)
     {
-        try { File.AppendAllText(AppPaths.CoreLogFile, $"{_clock.Now:HH:mm:ss} {line}{Environment.NewLine}"); } catch { }
+        try { AppLog.AppendCore($"{_clock.Now:HH:mm:ss} {line}"); } catch { }
         try { Output?.Invoke(line); } catch { }
     }
 
@@ -250,8 +250,8 @@ internal sealed class HttpProbeAdapter : IProbePort
         {
             using var resp = await _http.GetAsync("/version", ct);
             if (!resp.IsSuccessStatusCode) return null;
-            var content = await resp.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(content);
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             return doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
         }
         catch (OperationCanceledException) { throw; }

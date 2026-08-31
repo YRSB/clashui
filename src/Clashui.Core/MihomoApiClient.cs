@@ -24,7 +24,8 @@ public sealed class MihomoApiClient : IMihomoApiClient
     {
         using var resp = await _http.GetAsync("/version", ct);
         if (!resp.IsSuccessStatusCode) return null;
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
         return doc.RootElement.TryGetProperty("version", out var version) ? version.GetString() : null;
     }
 

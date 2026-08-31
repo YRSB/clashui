@@ -21,7 +21,10 @@ public sealed class TrayController : IDisposable
     private readonly ToggleMenuFlyoutItem _silentStartItem;
     private readonly ToggleMenuFlyoutItem _autoStartItem;
     private readonly MenuFlyoutSubItem _profilesItem = new() { Text = "配置文件" };
-
+    private readonly Dictionary<string, ToggleMenuFlyoutItem> _profileToggles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly MenuFlyoutSeparator _profilesSeparator = new();
+    private readonly MenuFlyoutItem _openProfilesItem;
+    private MenuFlyoutItem? _emptyPlaceholder;
     public TrayController(CoreOrchestrator orch, PolicyOps policy, Action showWindow, Action toggleWindow, string iconPath)
     {
         _orch = orch;
@@ -47,6 +50,10 @@ public sealed class TrayController : IDisposable
 
         _autoStartItem = new ToggleMenuFlyoutItem { Text = "开机自启（静默）" };
         _autoStartItem.Click += (_, _) => Safe(() => HandleAutoStartToggle(_autoStartItem.IsChecked));
+
+        _openProfilesItem = Item("打开 profiles 目录", () => _orch.OpenProfilesFolder());
+        _profilesItem.Items.Add(_profilesSeparator);
+        _profilesItem.Items.Add(_openProfilesItem);
 
         _menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
         _menu.Opening += (_, _) => RebuildProfiles();
@@ -163,32 +170,61 @@ public sealed class TrayController : IDisposable
 
     private void RebuildProfiles()
     {
-        _profilesItem.Items.Clear();
         var active = _orch.Settings.ActiveProfile;
         var profiles = _orch.GetProfiles();
 
         if (profiles.Count == 0)
         {
-            _profilesItem.Items.Add(new MenuFlyoutItem
+            foreach (var kv in _profileToggles.ToList())
             {
-                Text = "（profiles 目录为空）",
-                IsEnabled = false,
-            });
+                _profilesItem.Items.Remove(kv.Value);
+            }
+            _profileToggles.Clear();
+            if (_emptyPlaceholder is null)
+            {
+                _emptyPlaceholder = new MenuFlyoutItem { Text = "（profiles 目录为空）", IsEnabled = false };
+                _profilesItem.Items.Insert(0, _emptyPlaceholder);
+            }
+            return;
         }
 
-        foreach (var path in profiles)
+        if (_emptyPlaceholder is not null)
         {
-            var item = new ToggleMenuFlyoutItem
-            {
-                Text = Path.GetFileName(path),
-                IsChecked = string.Equals(path, active, StringComparison.OrdinalIgnoreCase),
-            };
-            item.Click += (_, _) => _ = _orch.SwitchProfileAsync(path);
-            _profilesItem.Items.Add(item);
+            _profilesItem.Items.Remove(_emptyPlaceholder);
+            _emptyPlaceholder = null;
         }
 
-        _profilesItem.Items.Add(new MenuFlyoutSeparator());
-        _profilesItem.Items.Add(Item("打开 profiles 目录", () => _orch.OpenProfilesFolder()));
+        var wanted = new HashSet<string>(profiles, StringComparer.OrdinalIgnoreCase);
+        foreach (var key in _profileToggles.Keys.Where(k => !wanted.Contains(k)).ToList())
+        {
+            _profilesItem.Items.Remove(_profileToggles[key]);
+            _profileToggles.Remove(key);
+        }
+
+        for (var i = 0; i < profiles.Count; i++)
+        {
+            var path = profiles[i];
+            if (!_profileToggles.TryGetValue(path, out var item))
+            {
+                var captured = path;
+                item = new ToggleMenuFlyoutItem { Text = Path.GetFileName(path) };
+                item.Click += (_, _) => _ = _orch.SwitchProfileAsync(captured);
+                _profileToggles[path] = item;
+                _profilesItem.Items.Insert(i, item);
+            }
+            else
+            {
+                var currentIdx = _profilesItem.Items.IndexOf(item);
+                if (currentIdx != i)
+                {
+                    _profilesItem.Items.RemoveAt(currentIdx);
+                    _profilesItem.Items.Insert(i, item);
+                }
+                var name = Path.GetFileName(path);
+                if (item.Text != name) item.Text = name;
+            }
+            item.IsChecked = string.Equals(path, active, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private static void Safe(Action action)
