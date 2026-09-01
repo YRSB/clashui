@@ -21,12 +21,13 @@ public sealed class AppSettings
     public bool SilentStart { get; set; }
     /// 提权操作挂起标记：非管理员下改开机自启失败时记录目标状态，
     /// 提权重启后由 ProcessPendingOperations 补做并清空
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? PendingAutoStart { get; set; }
 }
 
 public static partial class SettingsStore
 {
-    [JsonSourceGenerationOptions(WriteIndented = true)]
+    [JsonSourceGenerationOptions(WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonSerializable(typeof(AppSettings))]
     internal sealed partial class Ctx : JsonSerializerContext { }
 
