@@ -93,7 +93,7 @@ public sealed class AppHost : IDisposable
         _platform.ReconcileOnStartup(Environment.ProcessPath ?? "");
 
         _orch.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
-        _orch.CrashLoop += count => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification($"核心连续异常退出，请查看数据目录 core.log（订阅 provider 拉取失败时会出现）({count})"));
+        _orch.CrashLoop += count => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification($"核心连续异常退出（订阅 provider 拉取失败时会出现），请在面板日志页查看详情 ({count})"));
         _platform.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.StateChanged += state => _platform.OnCoreStateChanged(state.CoreState);
 

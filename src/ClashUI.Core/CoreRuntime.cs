@@ -169,7 +169,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
                 catch (OperationCanceledException) { return; }
                 catch { }
             }
-            AppLog.Error("核心健康检查超时，详情见 core.log");
+            AppLog.Error("核心健康检查超时");
         }
         catch { }
     }
@@ -197,7 +197,6 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
 
     private void OnProcessOutput(string line)
     {
-        try { AppLog.AppendCore($"{_clock.Now:HH:mm:ss} {line}"); } catch { }
         try { Output?.Invoke(line); } catch { }
     }
 

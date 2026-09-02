@@ -35,7 +35,7 @@ scripts/           图标生成等工具脚本
 | `config.runtime.yaml` | 合成后的运行时配置，核心实际加载的文件 |
 | `settings.json` | 应用设置（端口、secret、开关状态） |
 | `ui/` | mihomo 自动下载的面板文件 |
-| `logs/` | `app.log`（应用）与 `core.log`（核心输出） |
+| `logs/` | `app.log`（应用日志，面板日志页可查看核心实时日志） |
 
 ## 使用
 

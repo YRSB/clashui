@@ -56,7 +56,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         _runtime.CrashLoop += c =>
         {
             CrashLoop?.Invoke(c);
-            Notify("核心连续异常退出，请查看数据目录 core.log（订阅 provider 拉取失败时会出现）");
+            Notify("核心连续异常退出（订阅 provider 拉取失败时会出现），请在面板日志页查看详情");
         };
         _watcher.Changed += OnProfileFileMaybeChanged;
     }
@@ -81,7 +81,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         _legacyRuntime.CrashLoop += c =>
         {
             CrashLoop?.Invoke(c);
-            Notify("核心连续异常退出，请查看数据目录 core.log（订阅 provider 拉取失败时会出现）");
+            Notify("核心连续异常退出（订阅 provider 拉取失败时会出现），请在面板日志页查看详情");
         };
         _watcher.Changed += OnProfileFileMaybeChanged;
     }
@@ -164,7 +164,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
                         return OrchestratorResult.Fail(msg);
                     }
                     var fallback = outcome.Cause ?? outcome.Failure.ToString();
-                    if (outcome.Failure == CoreFailure.ProbeTimeout) Notify("核心健康检查超时，详情见数据目录 core.log");
+                    if (outcome.Failure == CoreFailure.ProbeTimeout) Notify("核心健康检查超时");
                     else if (outcome.Failure == CoreFailure.Cancelled) Notify("启动已取消");
                     else Notify(fallback);
                     return OrchestratorResult.Fail(fallback);

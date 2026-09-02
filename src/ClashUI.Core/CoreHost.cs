@@ -127,8 +127,6 @@ internal sealed class CoreHost : IDisposable
 
     private void OnOutput(string line)
     {
-        try { File.AppendAllText(AppPaths.CoreLogFile, $"{DateTime.Now:HH:mm:ss} {line}{Environment.NewLine}"); }
-        catch { }
         Output?.Invoke(line);
     }
 
