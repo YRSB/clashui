@@ -92,9 +92,9 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         Settings = _settingsStore.Load();
         Settings.ActiveProfile = ConfigComposer.ResolveProfile(Settings.ActiveProfile, createDefault: true);
         _settingsStore.Save(Settings);
-        if (Settings.SystemProxyEnabled && SystemProxy.IsSetTo(Settings.MixedPort)) SystemProxy.Clear();
         StartWatcher();
     }
+
 
     public async void StartOnLaunch()
     {
@@ -109,23 +109,16 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 
     private void OnRuntimeStateChanged(CoreState state)
     {
-        if (state == CoreState.Running) OnCoreReady();
-        if (state == CoreState.Stopped && Settings.SystemProxyEnabled)
-            SystemProxy.Clear();
         RaiseStateChanged();
     }
 
     private void OnLegacyStateChanged(CoreState state)
     {
-        if (state == CoreState.Running) OnCoreReady();
-        if (state == CoreState.Stopped && Settings.SystemProxyEnabled)
-            SystemProxy.Clear();
         RaiseStateChanged();
     }
 
     private void OnCoreReady()
     {
-        if (Settings.SystemProxyEnabled) SystemProxy.Set(Settings.MixedPort);
     }
 
     public async Task<OrchestratorResult> StartAsync()
@@ -356,7 +349,6 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
     {
         _watcher.Dispose();
         _debounceCts?.Cancel();
-        if (Settings.SystemProxyEnabled) SystemProxy.Clear();
         if (_runtime is not null)
         {
             try { _runtime.StopAsync().GetAwaiter().GetResult(); } catch { }
@@ -366,6 +358,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
             try { _legacyRuntime!.Stop(); } catch { }
         }
     }
+
 
     public void Dispose()
     {

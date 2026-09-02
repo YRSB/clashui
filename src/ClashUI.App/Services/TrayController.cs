@@ -6,6 +6,7 @@ using WinUIEx;
 
 namespace ClashUI.App.Services;
 
+[Obsolete("Use TrayPresenter + ITrayView (App/Tray). Will be removed after migration.")]
 public sealed class TrayController : IDisposable
 {
     private readonly CoreOrchestrator _orch;
