@@ -1,4 +1,4 @@
-# Clashui
+# ClashUI
 
 mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系统集成，面板用 WebView2 内嵌 metacubexd。WinUI 3 + NativeAOT。
 
@@ -19,14 +19,14 @@ mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系
 ## 目录
 
 ```
-src/Clashui.Core   核心管理 / 配置合成 / 系统代理 / 提权 / 计划任务（无 UI 依赖，IsAotCompatible）
-src/Clashui.App    WinUI 3 外壳：托盘（WinUIEx TrayIcon）、主窗口（WebView2）、编排器
+src/ClashUI.Core   核心管理 / 配置合成 / 系统代理 / 提权 / 计划任务（无 UI 依赖，IsAotCompatible）
+src/ClashUI.App    WinUI 3 外壳：托盘（WinUIEx TrayIcon）、主窗口（WebView2）、编排器
 scripts/           图标生成等工具脚本
 ```
 
 ## 数据目录
 
-`%LOCALAPPDATA%\Clashui\`
+`%LOCALAPPDATA%\ClashUI\`
 
 | 路径 | 说明 |
 |---|---|
@@ -39,9 +39,9 @@ scripts/           图标生成等工具脚本
 
 ## 使用
 
-1. 发布：`dotnet publish src/Clashui.App/Clashui.App.csproj -c Release -r win-x64 -o <目录>`（NativeAOT + 自包含，约 74MB / 152 文件；产物构成、验证清单与框架依赖备选见 [docs/publish.md](docs/publish.md)）
+1. 发布：`dotnet publish src/ClashUI.App/ClashUI.App.csproj -c Release -r win-x64 -o <目录>`（NativeAOT + 自包含，约 74MB / 152 文件；产物构成、验证清单与框架依赖备选见 [docs/publish.md](docs/publish.md)）
 2. mihomo 三选一：数据目录放 `mihomo.exe` / `settings.json` 设 `MihomoPath` / 直接用 PATH 里的（如 scoop 安装的）；把订阅 YAML 放进 `profiles\`，托盘「配置文件」子菜单选择（或 `settings.json` 的 `ActiveProfile`，不填用 default.yaml）
-3. 启动 Clashui.App.exe —— 若开启 TUN 会弹 UAC 提权重启一次；之后用托盘「开机自启」注册计划任务，登录即静默提权运行
+3. 启动 ClashUI.App.exe —— 若开启 TUN 会弹 UAC 提权重启一次；之后用托盘「开机自启」注册计划任务，登录即静默提权运行
 4. 静默启动：托盘勾选「静默启动」后所有启动均不显示窗口；也可带 `--silent`（`-s`）参数启动。开机自启的计划任务已自动携带该参数
 
 ## TUN / 提权设计
@@ -53,7 +53,7 @@ scripts/           图标生成等工具脚本
 - [x] ~~核心进程加入 Job Object~~（已完成）
 - [ ] 订阅管理 UI（M1 剩余）：订阅 URL 下载/更新、profile 增删改名（切换与热重载已由托盘子菜单实现）
 - [ ] 核心自动下载与更新（M2，GitHub Releases + 哈希校验）
-- [x] ~~WebView2 用户数据目录迁到数据目录~~（已迁至 `%LOCALAPPDATA%\Clashui\webview2`）
+- [x] ~~WebView2 用户数据目录迁到数据目录~~（已迁至 `%LOCALAPPDATA%\ClashUI\webview2`）
 - [x] ~~面板首次打开需在 metacubexd 设置页填一次 `127.0.0.1:9090` + secret~~（DashboardUrl 已带 `#/setup?hostname=&port=&secret=` 深链，setup 页自动连接）
 - [x] ~~单实例目前是「第二个实例直接退出」，未做激活转发~~（第二实例发命名信号 + `AllowSetForegroundWindow` 转授前台权，第一实例弹出面板；`--silent` 再启动不转发）
 

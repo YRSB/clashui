@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 if (-not $BasePng) { $BasePng = Join-Path $PSScriptRoot "clash-cat.png" }
 if (-not (Test-Path $BasePng)) { throw "base png not found: $BasePng" }
-$outDir = Join-Path $PSScriptRoot "..\src\Clashui.App\Assets"
+$outDir = Join-Path $PSScriptRoot "..\src\ClashUI.App\Assets"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 $base = New-Object System.Drawing.Bitmap($BasePng)
 $sizes = 16, 24, 32, 48
@@ -107,7 +107,7 @@ foreach ($entry in $variants.GetEnumerator()) {
   $x += $cell
 }
 $pg.Dispose()
-$preview = Join-Path $env:TEMP "clashui-icons\tray-preview.png"
+$preview = Join-Path $env:TEMP "ClashUI-icons\tray-preview.png"
 New-Item -ItemType Directory -Force -Path (Split-Path $preview) | Out-Null
 $pv.Save($preview, [System.Drawing.Imaging.ImageFormat]::Png)
 $pv.Dispose()

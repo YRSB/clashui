@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/ClashUI.Core/ClashUI.Core.csproj" />
+  <Project Path="src/ClashUI.App/ClashUI.App.csproj" />
+</Solution>
