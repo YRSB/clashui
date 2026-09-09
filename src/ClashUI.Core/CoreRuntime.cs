@@ -150,10 +150,11 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
     {
         try
         {
-            for (var i = 0; i < 50; i++)
+            for (var i = 0; ; i++)
             {
                 try { await _delay.Delay(TimeSpan.FromMilliseconds(300), ct); } catch (OperationCanceledException) { return; }
                 if (State != CoreState.Starting || ct.IsCancellationRequested) return;
+                if (i > 0 && i % 50 == 0) AppLog.Info("核心启动等待中（健康检查尚未通过）");
                 var probe = _probe;
                 if (probe is null) return;
                 try
@@ -169,7 +170,6 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
                 catch (OperationCanceledException) { return; }
                 catch { }
             }
-            AppLog.Error("核心健康检查超时");
         }
         catch { }
     }
