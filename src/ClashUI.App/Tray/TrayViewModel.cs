@@ -26,4 +26,4 @@ public enum TrayCommandKind
     Exit
 }
 
-public sealed record TrayCommand(TrayCommandKind Kind, string? Payload = null);
+public sealed record TrayCommand(TrayCommandKind Kind, string? Payload = null, bool? Flag = null);

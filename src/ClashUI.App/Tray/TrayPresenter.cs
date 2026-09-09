@@ -11,6 +11,8 @@ public sealed class TrayPresenter : IDisposable
     private readonly IDispatcher _dispatcher;
     private readonly Action _showWindow;
     private bool _disposed;
+    private bool? _autoStartCache;
+    private long _autoStartCacheAt;
 
     public TrayPresenter(ITrayView view, CoreOrchestrator orch, IPlatformPolicy platform, IDispatcher dispatcher, Action showWindow)
     {
@@ -39,7 +41,7 @@ public sealed class TrayPresenter : IDisposable
             settings.TunEnabled,
             settings.SystemProxyEnabled,
             settings.SilentStart,
-            _platform.IsAutoStartRegistered(),
+            GetAutoStartRegistered(),
             _orch.GetProfiles(),
             settings.ActiveProfile);
         var vm = TrayIconMapper.ToViewModel(state);
@@ -74,7 +76,7 @@ public sealed class TrayPresenter : IDisposable
                     HandleSilentStartToggle();
                     break;
                 case TrayCommandKind.ToggleAutoStart:
-                    HandleAutoStartToggle();
+                    HandleAutoStartToggle(cmd.Flag);
                     break;
                 case TrayCommandKind.SwitchProfile:
                     if (cmd.Payload is not null) _ = _orch.SwitchProfileAsync(cmd.Payload);
@@ -97,7 +99,7 @@ public sealed class TrayPresenter : IDisposable
     private void HandleTunToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, !s.TunEnabled, _platform.IsAutoStartRegistered(), s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, !s.TunEnabled, GetAutoStartRegistered(), s.SilentStart, Environment.ProcessPath ?? "");
         var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
         if (r.Kind == PolicyResultKind.Ok)
         {
@@ -121,7 +123,7 @@ public sealed class TrayPresenter : IDisposable
     private void HandleSystemProxyToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(!s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, _platform.IsAutoStartRegistered(), s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(!s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, GetAutoStartRegistered(), s.SilentStart, Environment.ProcessPath ?? "");
         var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
         if (r.Kind == PolicyResultKind.Failed)
             App.ShowGlobalNotification($"切换系统代理失败：{r.Cause}");
@@ -130,25 +132,48 @@ public sealed class TrayPresenter : IDisposable
     private void HandleSilentStartToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, _platform.IsAutoStartRegistered(), !s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, GetAutoStartRegistered(), !s.SilentStart, Environment.ProcessPath ?? "");
         _ = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
     }
 
-    private void HandleAutoStartToggle()
+    private bool GetAutoStartRegistered()
     {
-        var s = _orch.Settings;
-        var currently = _platform.IsAutoStartRegistered();
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, !currently, s.SilentStart, Environment.ProcessPath ?? "");
-        var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
-        if (r.Kind == PolicyResultKind.NeedsElevation)
+        var now = Environment.TickCount64;
+        if (_autoStartCache.HasValue && now - _autoStartCacheAt < 10000) return _autoStartCache.Value;
+        var v = _platform.IsAutoStartRegistered();
+        _autoStartCache = v;
+        _autoStartCacheAt = now;
+        return v;
+    }
+
+    private void HandleAutoStartToggle(bool? wantEnable)
+    {
+        try
         {
-            App.ShowGlobalNotification("修改开机自启需要管理员权限，正在以管理员身份重启…");
-            Exit();
+            var s = _orch.Settings;
+            var enable = wantEnable ?? !GetAutoStartRegistered();
+            var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, enable, s.SilentStart, Environment.ProcessPath ?? "");
+            var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
+            _autoStartCache = null;
+            if (r.Kind == PolicyResultKind.Ok && GetAutoStartRegistered() != enable)
+            {
+                AppLog.Error($"开机自启未生效：目标 {enable}");
+                r = new PolicyResult(PolicyResultKind.Failed, "状态未生效");
+            }
+            if (r.Kind == PolicyResultKind.NeedsElevation)
+            {
+                App.ShowGlobalNotification("修改开机自启需要管理员权限，正在以管理员身份重启…");
+                Exit();
+            }
+            else if (r.Kind == PolicyResultKind.CancelledByUser)
+                App.ShowGlobalNotification("已取消提权，开机自启未更改");
+            else if (r.Kind == PolicyResultKind.Failed)
+                App.ShowGlobalNotification("修改开机自启失败，详情见日志");
         }
-        else if (r.Kind == PolicyResultKind.CancelledByUser)
-            App.ShowGlobalNotification("已取消提权，开机自启未更改");
-        else if (r.Kind == PolicyResultKind.Failed)
-            App.ShowGlobalNotification("修改开机自启失败，详情见日志");
+        finally
+        {
+            _autoStartCache = null;
+        }
     }
 
     private void Exit()

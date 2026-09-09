@@ -18,6 +18,7 @@ public sealed class WinUiTrayView : ITrayView
     private readonly Dictionary<string, ToggleMenuFlyoutItem> _profileToggles = new(StringComparer.OrdinalIgnoreCase);
     private readonly MenuFlyoutSeparator _profilesSeparator = new();
     private readonly MenuFlyoutItem _openProfilesItem;
+    private string? _lastIconFile;
     private MenuFlyoutItem? _emptyPlaceholder;
     private readonly Action _showWindow;
     private readonly Action _toggleWindow;
@@ -43,7 +44,7 @@ public sealed class WinUiTrayView : ITrayView
         _silentStartItem = new ToggleMenuFlyoutItem { Text = "静默启动" };
         _silentStartItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleSilentStart)));
         _autoStartItem = new ToggleMenuFlyoutItem { Text = "开机自启（静默）" };
-        _autoStartItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleAutoStart)));
+        _autoStartItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleAutoStart, Flag: _autoStartItem.IsChecked)));
 
         _openProfilesItem = Item("打开 profiles 目录", () => Command?.Invoke(new TrayCommand(TrayCommandKind.OpenProfilesFolder)));
         _profilesItem.Items.Add(_profilesSeparator);
@@ -100,14 +101,25 @@ public sealed class WinUiTrayView : ITrayView
         _tunItem.IsChecked = m.TunChecked;
         _silentStartItem.IsChecked = m.SilentChecked;
         _autoStartItem.IsChecked = m.AutoStartChecked;
+        if (!string.Equals(_lastIconFile, m.IconFile, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                _icon.SetIcon(Path.Combine(_assetsDir, m.IconFile));
+                _lastIconFile = m.IconFile;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("更新托盘图标失败", ex);
+            }
+        }
         try
         {
-            _icon.SetIcon(Path.Combine(_assetsDir, m.IconFile));
             _icon.Tooltip = m.Tooltip;
         }
         catch (Exception ex)
         {
-            AppLog.Error("更新托盘图标失败", ex);
+            AppLog.Error("更新托盘提示失败", ex);
         }
         RenderProfiles(m.Profiles, m.IsEmpty);
     }
