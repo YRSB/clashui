@@ -120,6 +120,7 @@ public sealed class PlatformIntegration : IPlatformPolicy
 
     public void ReconcileOnStartup(string exePath)
     {
+        try { _autoStart.EnsureSettings(); } catch { }
         var s = GetSettings();
         if (s.SystemProxyEnabled && _proxy.IsSetTo(s.MixedPort))
         {

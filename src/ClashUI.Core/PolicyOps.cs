@@ -12,6 +12,7 @@ public interface IAutoStartOps
     bool IsRegistered();
     bool Register(string exe);
     bool Unregister();
+    void EnsureSettings();
 }
 
 public interface IElevationOps
@@ -32,6 +33,7 @@ public sealed class AutoStartAdapter : IAutoStartOps
     public bool IsRegistered() => AutoStart.IsRegistered();
     public bool Register(string exe) => AutoStart.Register(exe);
     public bool Unregister() => AutoStart.Unregister();
+    public void EnsureSettings() => AutoStart.EnsureTaskSettings();
 }
 
 public sealed class ElevationAdapter : IElevationOps
@@ -80,6 +82,8 @@ public sealed class FakeAutoStart : IAutoStartOps
         Registered = false;
         return true;
     }
+    public int EnsureSettingsCount { get; private set; }
+    public void EnsureSettings() => EnsureSettingsCount++;
 }
 
 public sealed class FakeElevation : IElevationOps

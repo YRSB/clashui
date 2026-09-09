@@ -83,32 +83,52 @@ public sealed class AppHost : IDisposable
             earlyStore.Save(earlySettings);
             AppLog.Info("已取消提权，TUN 已临时关闭，下次可在托盘中重新开启");
         }
-
         _orch = new CoreOrchestrator(_store, _composer, _runtime, _watcher, _time, _apiFactory);
         _platform = new PlatformIntegration(_store, _proxy, _autoStart, _elevationOps, () => _orch.IsCoreRunning);
         _orch.Initialize();
         _platform.BindSettings(_orch.Settings);
         LegacyPolicy = new PolicyOps(_store, _proxy, _autoStart, _elevationOps);
         LegacyPolicy.BindSettings(_orch.Settings);
-
         _orch.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.CrashLoop += count => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification($"核心连续异常退出（订阅 provider 拉取失败时会出现），请在面板日志页查看详情 ({count})"));
         _platform.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.StateChanged += state => _platform.OnCoreStateChanged(state.CoreState);
         _platform.ReconcileOnStartup(Environment.ProcessPath ?? "");
-
-
         _bridge.StartWatcher(() => _dispatcher.TryEnqueue(args.ShowWindow));
-
         StartSilent = args.HasSilentArg || _orch.Settings.SilentStart;
-
-        _view = new WinUiTrayView(args.ShowWindow, args.ToggleWindow, args.IconPath, cmd => { });
-        _presenter = new TrayPresenter(_view, _orch, _platform, _dispatcher, args.ShowWindow);
-        _presenter.Start();
-
-        if (!StartSilent) args.ShowWindow();
         _orch.StartOnLaunch();
+        if (!StartSilent) args.ShowWindow();
+        StartTrayWithRetry(args);
         return true;
+    }
+
+    private void StartTrayWithRetry(HostStartArgs args)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var view = new WinUiTrayView(args.ShowWindow, args.ToggleWindow, args.IconPath, cmd => { });
+                var presenter = new TrayPresenter(view, _orch!, _platform!, _dispatcher, args.ShowWindow);
+                presenter.Start();
+                if (_disposed)
+                {
+                    presenter.Dispose();
+                    view.Dispose();
+                    return;
+                }
+                _view = view;
+                _presenter = presenter;
+                return;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error($"托盘初始化失败（第 {attempt + 1} 次），稍后重试", ex);
+                if (attempt >= 11) break;
+                Thread.Sleep(5000);
+            }
+        }
+        AppLog.Error("托盘初始化失败，核心继续运行（无托盘图标）");
     }
 
     public void Dispose()

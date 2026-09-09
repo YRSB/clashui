@@ -13,7 +13,14 @@ public static class AutoStart
 
     public static bool Register(string exePath)
     {
-        return Run("schtasks", $"/Create /F /TN {TaskName} /SC ONLOGON /RL HIGHEST /TR \"\\\"{exePath}\\\" --silent\"") == 0;
+        var ok = Run("schtasks", $"/Create /F /TN {TaskName} /SC ONLOGON /RL HIGHEST /TR \"\\\"{exePath}\\\" --silent\"") == 0;
+        if (ok) EnsureTaskSettings();
+        return ok;
+    }
+
+    public static void EnsureTaskSettings()
+    {
+        Run("powershell", "-NoProfile -NonInteractive -Command \"Set-ScheduledTask -TaskName ClashUI -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero))\"");
     }
 
     public static bool Unregister()
