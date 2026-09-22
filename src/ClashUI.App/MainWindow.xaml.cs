@@ -15,8 +15,8 @@ public sealed partial class MainWindow : Window
 {
     private readonly CoreOrchestrator _orch;
     private readonly DispatcherQueue _dispatcher;
-    private bool _navigated;
-    private bool _panelReady;
+    private bool _webReady;
+    private string _loadedUrl = "";
 
     public MainWindow(CoreOrchestrator orch)
     {
@@ -52,7 +52,7 @@ public sealed partial class MainWindow : Window
         };
         _orch.StateChanged += _ => _dispatcher.TryEnqueue(OnStateChanged);
         OnStateChanged();
-        Panel.Loaded += async (_, _) => await TryNavigateAsync();
+        Panel.Loaded += async (_, _) => await NavigatePanelAsync();
     }
 
     public void ShowAndActivate()
@@ -70,7 +70,7 @@ public sealed partial class MainWindow : Window
 
     private void SetPanelMemoryTarget(bool low)
     {
-        if (!_panelReady) return;
+        if (!_webReady) return;
         try
         {
             Panel.CoreWebView2.MemoryUsageTargetLevel = low
@@ -109,7 +109,7 @@ public sealed partial class MainWindow : Window
         if (running)
         {
             Banner.IsOpen = false;
-            _ = TryNavigateAsync();
+            _ = NavigatePanelAsync();
             return;
         }
         var settings = _orch.Settings;
@@ -118,13 +118,9 @@ public sealed partial class MainWindow : Window
         Banner.Title = hasExe ? "核心未运行，详情见日志" : "未找到 mihomo";
         Banner.Message = hasExe ? "可从托盘菜单重启核心" : $"请将其放入数据目录：{AppPaths.Root}";
     }
-
-    private async Task TryNavigateAsync()
+    private async Task<bool> EnsureWebViewAsync()
     {
-        if (_navigated) return;
-        for (var i = 0; i < 60 && !_orch.IsCoreRunning; i++) await Task.Delay(250);
-        if (!_orch.IsCoreRunning || _navigated) return;
-        _navigated = true;
+        if (_webReady) return true;
         try
         {
             var options = new CoreWebView2EnvironmentOptions
@@ -135,20 +131,64 @@ public sealed partial class MainWindow : Window
             var env = await CoreWebView2Environment.CreateWithOptionsAsync(
                 null, AppPaths.WebView2DataDir, options);
             await Panel.EnsureCoreWebView2Async(env);
-            _panelReady = true;
-            var url = _orch.Composer.DashboardUrlFor(_orch.Settings);
-            Panel.Source = new Uri(url);
+            _webReady = true;
+            return true;
         }
         catch (Exception ex)
         {
-            _navigated = false;
             AppLog.Error("WebView2 初始化失败", ex);
             Banner.IsOpen = true;
             Banner.Title = "WebView2 初始化失败";
             Banner.Message = ex.Message;
+            return false;
         }
     }
-
+    private async Task NavigatePanelAsync()
+    {
+        if (!_orch.IsCoreRunning) return;
+        string target;
+        try
+        {
+            var settings = _orch.Settings;
+            if (_orch.Composer is DefaultConfigComposer defaults && defaults.PanelPort > 0)
+            {
+                var active = PanelCatalog.Normalize(settings.ActivePanel);
+                var targetId = active;
+                if (!PanelProvisioner.IsAvailable(active))
+                {
+                    var available = PanelProvisioner.GetAvailable();
+                    if (available.Count == 0)
+                    {
+                        Banner.IsOpen = true;
+                        Banner.Title = "面板正在下载";
+                        Banner.Message = "三面板均尚未就绪，下载完成后自动加载";
+                        return;
+                    }
+                    targetId = available[0];
+                }
+                target = PanelUrlBuilder.Build(targetId, settings.ControllerAddr, settings.Secret, defaults.PanelPort);
+            }
+            else
+            {
+                target = _orch.Composer.DashboardUrlFor(settings);
+            }
+        }
+        catch
+        {
+            return;
+        }
+        if (target == _loadedUrl) return;
+        if (!await EnsureWebViewAsync()) return;
+        try
+        {
+            Panel.Source = new Uri(target);
+            _loadedUrl = target;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("面板导航失败", ex);
+        }
+    }
     internal void ShowNotification(string message)
     {
         Banner.IsOpen = true;

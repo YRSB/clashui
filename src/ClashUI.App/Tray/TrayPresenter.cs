@@ -32,6 +32,8 @@ public sealed class TrayPresenter : IDisposable
 
     private void OnPlatformNotification(string msg) => App.ShowGlobalNotification(msg);
 
+    public void RefreshNow() => Refresh();
+
     private void Refresh()
     {
         if (_disposed) return;
@@ -43,7 +45,9 @@ public sealed class TrayPresenter : IDisposable
             settings.SilentStart,
             GetAutoStartRegistered(),
             _orch.GetProfiles(),
-            settings.ActiveProfile);
+            settings.ActiveProfile,
+            settings.ActivePanel,
+            ClashUI.Core.PanelProvisioner.GetAvailable());
         var vm = TrayIconMapper.ToViewModel(state);
         try { _view.Render(vm); } catch (Exception ex) { AppLog.Error("托盘渲染失败", ex); }
     }
@@ -80,6 +84,9 @@ public sealed class TrayPresenter : IDisposable
                     break;
                 case TrayCommandKind.SwitchProfile:
                     if (cmd.Payload is not null) _ = _orch.SwitchProfileAsync(cmd.Payload);
+                    break;
+                case TrayCommandKind.SwitchPanel:
+                    if (cmd.Payload is not null) _ = _orch.SwitchPanelAsync(cmd.Payload);
                     break;
                 case TrayCommandKind.Exit:
                     Exit();

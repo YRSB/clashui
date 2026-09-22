@@ -11,8 +11,8 @@ public sealed class AppSettings
     public int MixedPort { get; set; } = 7890;
     public string ControllerAddr { get; set; } = "127.0.0.1:9090";
     public string Secret { get; set; } = "";
-    /// mihomo external-ui-url，核心启动时自动下载面板到数据目录 ui/
     public string DashboardUrl { get; set; } = "https://github.com/Metacubex/metacubexd/archive/gh-pages.zip";
+    public string ActivePanel { get; set; } = "metacubexd";
     public string ActiveProfile { get; set; } = "";
     public bool TunEnabled { get; set; } = true;
     public bool SystemProxyEnabled { get; set; }

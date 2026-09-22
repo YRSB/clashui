@@ -317,7 +317,18 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
             : (exe, null);
     }
 
+    public void NotifyPanelsChanged() => RaiseStateChanged();
+    public Task<OrchestratorResult> SwitchPanelAsync(string id)
+    {
+        if (!PanelCatalog.IsValid(id))
+            return Task.FromResult(OrchestratorResult.Fail("InvalidPanel"));
+        Settings.ActivePanel = PanelCatalog.Normalize(id);
+        _settingsStore.Save(Settings);
+        RaiseStateChanged();
+        return Task.FromResult(OrchestratorResult.Success);
+    }
     private void RaiseStateChanged() => StateChanged?.Invoke(State);
+
 
     private void Notify(string message)
     {

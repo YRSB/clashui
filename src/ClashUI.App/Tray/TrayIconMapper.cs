@@ -1,5 +1,4 @@
 namespace ClashUI.App.Tray;
-
 public static class TrayIconMapper
 {
     public static (string IconFile, string Tooltip) Map(TrayState s)
@@ -14,11 +13,12 @@ public static class TrayIconMapper
             : "ClashUI — 核心运行中";
         return (iconFile, tooltip);
     }
-
     public static TrayViewModel ToViewModel(TrayState s)
     {
         var (iconFile, tooltip) = Map(s);
         var profiles = s.Profiles.Select(p => new ProfileEntry(p, Path.GetFileName(p), string.Equals(p, s.ActiveProfile, StringComparison.OrdinalIgnoreCase))).ToList();
-        return new TrayViewModel(s.SystemProxyEnabled, s.TunEnabled, s.SilentStart, s.AutoStartEnabled, iconFile, tooltip, profiles, profiles.Count == 0);
+        var active = ClashUI.Core.PanelCatalog.Normalize(s.ActivePanel);
+        var panels = ClashUI.Core.PanelCatalog.All.Select(p => new PanelEntry(p.Id, p.DisplayName, string.Equals(p.Id, active, StringComparison.OrdinalIgnoreCase), s.AvailablePanels.Contains(p.Id, StringComparer.OrdinalIgnoreCase))).ToList();
+        return new TrayViewModel(s.SystemProxyEnabled, s.TunEnabled, s.SilentStart, s.AutoStartEnabled, iconFile, tooltip, profiles, profiles.Count == 0, panels);
     }
 }

@@ -1,5 +1,4 @@
 namespace ClashUI.App.Tray;
-
 public sealed record TrayState(
     bool IsCoreRunning,
     bool TunEnabled,
@@ -7,4 +6,6 @@ public sealed record TrayState(
     bool SilentStart,
     bool AutoStartEnabled,
     IReadOnlyList<string> Profiles,
-    string ActiveProfile);
+    string ActiveProfile,
+    string ActivePanel,
+    IReadOnlyList<string> AvailablePanels);

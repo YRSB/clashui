@@ -18,6 +18,8 @@ public sealed class WinUiTrayView : ITrayView
     private readonly Dictionary<string, ToggleMenuFlyoutItem> _profileToggles = new(StringComparer.OrdinalIgnoreCase);
     private readonly MenuFlyoutSeparator _profilesSeparator = new();
     private readonly MenuFlyoutItem _openProfilesItem;
+    private readonly MenuFlyoutSubItem _panelsItem = new() { Text = "面板" };
+    private readonly Dictionary<string, ToggleMenuFlyoutItem> _panelToggles = new(StringComparer.OrdinalIgnoreCase);
     private string? _lastIconFile;
     private MenuFlyoutItem? _emptyPlaceholder;
     private readonly Action _showWindow;
@@ -53,7 +55,7 @@ public sealed class WinUiTrayView : ITrayView
         _menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
         _menu.Items.Add(showItem);
         _menu.Items.Add(_profilesItem);
-        _menu.Items.Add(new MenuFlyoutSeparator());
+        _menu.Items.Add(_panelsItem);
         _menu.Items.Add(_sysProxyItem);
         _menu.Items.Add(_tunItem);
         _menu.Items.Add(new MenuFlyoutSeparator());
@@ -122,6 +124,7 @@ public sealed class WinUiTrayView : ITrayView
             AppLog.Error("更新托盘提示失败", ex);
         }
         RenderProfiles(m.Profiles, m.IsEmpty);
+        RenderPanels(m.Panels);
     }
 
     private void RenderProfiles(IReadOnlyList<ProfileEntry> profiles, bool isEmpty)
@@ -174,11 +177,43 @@ public sealed class WinUiTrayView : ITrayView
         }
     }
 
+    private void RenderPanels(IReadOnlyList<PanelEntry> panels)
+    {
+        var wanted = new HashSet<string>(panels.Select(p => p.Id), StringComparer.OrdinalIgnoreCase);
+        foreach (var key in _panelToggles.Keys.Where(k => !wanted.Contains(k)).ToList())
+        {
+            _panelsItem.Items.Remove(_panelToggles[key]);
+            _panelToggles.Remove(key);
+        }
+        for (var i = 0; i < panels.Count; i++)
+        {
+            var e = panels[i];
+            if (!_panelToggles.TryGetValue(e.Id, out var item))
+            {
+                var captured = e.Id;
+                item = new ToggleMenuFlyoutItem { Text = e.Name };
+                item.Click += (_, _) => Command?.Invoke(new TrayCommand(TrayCommandKind.SwitchPanel, captured));
+                _panelToggles[e.Id] = item;
+                _panelsItem.Items.Insert(i, item);
+            }
+            else
+            {
+                var currentIdx = _panelsItem.Items.IndexOf(item);
+                if (currentIdx != i)
+                {
+                    _panelsItem.Items.RemoveAt(currentIdx);
+                    _panelsItem.Items.Insert(i, item);
+                }
+                if (item.Text != e.Name) item.Text = e.Name;
+            }
+            item.IsChecked = e.IsChecked;
+            item.IsEnabled = e.IsEnabled;
+        }
+    }
     private static void Safe(Action action)
     {
         try { action(); } catch (Exception ex) { AppLog.Error("托盘操作失败", ex); }
     }
-
     private static MenuFlyoutItem Item(string text, Action onClick)
     {
         var item = new MenuFlyoutItem { Text = text };

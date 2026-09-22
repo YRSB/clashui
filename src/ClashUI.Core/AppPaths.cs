@@ -9,6 +9,7 @@ public static class AppPaths
     public static string ProfilesDir => Path.Combine(Root, "profiles");
     public static string LogsDir => Path.Combine(Root, "logs");
     public static string UiDir => Path.Combine(Root, "ui");
+    public static string PanelDir(string id) => Path.Combine(UiDir, id);
     public static string SettingsFile => Path.Combine(Root, "settings.json");
     public static string RuntimeConfigFile => Path.Combine(Root, "config.runtime.yaml");
     public static string CoreExe => Path.Combine(Root, "mihomo.exe");

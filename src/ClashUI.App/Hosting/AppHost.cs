@@ -1,11 +1,9 @@
+using ClashUI.App.Services;
 using ClashUI.App.Tray;
 using ClashUI.Core;
 using Microsoft.UI.Dispatching;
-
 namespace ClashUI.App.Hosting;
-
 public sealed record HostStartArgs(Action ShowWindow, Action ToggleWindow, string IconPath, bool HasSilentArg);
-
 public sealed class AppHost : IDisposable
 {
     private readonly ISingleInstanceGuard _guard;
@@ -26,7 +24,9 @@ public sealed class AppHost : IDisposable
     private IPlatformPolicy? _platform;
     private TrayPresenter? _presenter;
     private ITrayView? _view;
+    private PanelStaticServer? _panels;
     private bool _disposed;
+    public int PanelPort => _panels?.ActualPort ?? 0;
     public CoreOrchestrator Orchestrator => _orch ?? throw new InvalidOperationException("Host not started");
     public IPlatformPolicy Platform => _platform ?? throw new InvalidOperationException("Host not started");
     public ISettingsStore Store => _store;
@@ -93,6 +93,8 @@ public sealed class AppHost : IDisposable
         _orch.CrashLoop += count => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification($"核心连续异常退出（订阅 provider 拉取失败时会出现），请在面板日志页查看详情 ({count})"));
         _platform.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.StateChanged += state => _platform.OnCoreStateChanged(state.CoreState);
+        StartPanelServer();
+        StartPanelProvisioning();
         _platform.ReconcileOnStartup(Environment.ProcessPath ?? "");
         _bridge.StartWatcher(() => _dispatcher.TryEnqueue(args.ShowWindow));
         StartSilent = args.HasSilentArg || _orch.Settings.SilentStart;
@@ -100,6 +102,47 @@ public sealed class AppHost : IDisposable
         if (!StartSilent) args.ShowWindow();
         StartTrayWithRetry(args);
         return true;
+    }
+
+    private void StartPanelServer()
+    {
+        var server = new PanelStaticServer();
+        if (server.Start())
+        {
+            _panels = server;
+            if (_composer is DefaultConfigComposer defaults)
+                defaults.PanelPort = server.ActualPort;
+            return;
+        }
+        try { server.Dispose(); } catch { }
+        AppLog.Error("本地面板服务启动失败，已回退旧 /ui 链路");
+        _dispatcher.TryEnqueue(() => App.ShowGlobalNotification("本地面板服务启动失败，已回退旧面板链路"));
+    }
+
+    private void StartPanelProvisioning()
+    {
+        var orch = _orch;
+        if (orch is null)
+            return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await PanelProvisioner.EnsureAllAsync(
+                    msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg))).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("面板后台供应失败", ex);
+            }
+            try
+            {
+                _dispatcher.TryEnqueue(() => orch.NotifyPanelsChanged());
+            }
+            catch
+            {
+            }
+        });
     }
 
     private void StartTrayWithRetry(HostStartArgs args)
@@ -137,6 +180,8 @@ public sealed class AppHost : IDisposable
         _disposed = true;
         try { _presenter?.Dispose(); } catch { }
         try { _view?.Dispose(); } catch { }
+        try { _panels?.Stop(); } catch { }
+        try { _panels?.Dispose(); } catch { }
         try { _orch?.Stop(); } catch { }
         try { _orch?.Dispose(); } catch { }
         try { _runtime.Dispose(); } catch { }

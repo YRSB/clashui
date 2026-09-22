@@ -23,8 +23,10 @@ internal static class DashboardUrlHelper
 
 public sealed class DefaultConfigComposer : IConfigComposer
 {
+    public int PanelPort { get; set; }
     public string Compose(AppSettings s) => ConfigComposer.Compose(s);
-    public string DashboardUrlFor(AppSettings s) => DashboardUrlHelper.Build(s);
+    public string DashboardUrlFor(AppSettings s)
+        => PanelPort > 0 ? PanelUrlBuilder.Build(s.ActivePanel, s.ControllerAddr, s.Secret, PanelPort) : DashboardUrlHelper.Build(s);
 }
 
 public sealed class FakeConfigComposer : IConfigComposer
