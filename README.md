@@ -2,13 +2,12 @@
 
 mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系统集成，面板用 WebView2 内嵌 metacubexd。WinUI 3 + NativeAOT。
 
-## 现有功能（M0）
+## 功能
 
 - WebView2 内存优化：面板隐藏到托盘时切 `MemoryUsageTargetLevel.Low`（实测工作集 ~680MB → ~70MB），显示时恢复；环境关闭跟踪防护 + `--renderer-process-limit=1`
-- 托盘常驻：左键打开面板（最大化窗口），右键菜单操作；关闭窗口即隐藏到托盘，真正退出走托盘菜单；图标随状态变化（核心未运行灰化 / 系统代理绿点 / TUN 橙点，经典 Clash 猫头，取自 clash-verge-rev）
-- 静默启动：托盘「静默启动」开关（写入 settings.json），或 `--silent` / `-s` 参数；静默模式下不创建主窗口，仅托盘运行，首次点托盘才创建窗口
-- 配置文件切换：托盘「配置文件」子菜单列出 `profiles\` 下所有 YAML，点击切换并热重载（失败自动整核重启）
-- 核心进程托管：启动 / 停止 / 崩溃自动重启（3 秒后拉起）；核心挂载 kill-on-close Job，应用强杀/崩溃不残留孤儿进程
+- 托盘常驻：左键切换显示 / 隐藏（首次显示为最大化窗口），右键菜单含显示面板、配置文件、系统代理、TUN 模式、重启核心、数据目录、静默启动、开机自启、退出；关闭窗口即隐藏到托盘，真正退出走托盘菜单；图标随状态变化（核心未运行灰化 / 系统代理绿点 / TUN 橙点，经典 Clash 猫头，取自 clash-verge-rev）
+- 配置文件切换：托盘「配置文件」子菜单列出 `profiles\` 下所有 YAML，点击切换并热重载（失败自动整核重启）；`profiles\` 内文件被外部修改也自动热重载
+- 核心进程托管：启动 / 停止 / 崩溃 3 秒后自动重启并挂载 kill-on-close Job，应用强杀 / 崩溃不残留孤儿进程；连续异常退出在面板横幅提示，去日志页查看详情
 - TUN 模式开关（需管理员，见下）
 - 系统代理开关（写注册表 + 广播刷新，立即生效）；启动时自动清理崩溃残留的指向本应用端口的系统代理（防开机断网）
 - 配置合成：订阅 profile 原样保留，注入端口 / secret / external-controller / external-ui / tun / dns
@@ -19,8 +18,8 @@ mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系
 ## 目录
 
 ```
-src/ClashUI.Core   核心管理 / 配置合成 / 系统代理 / 提权 / 计划任务（无 UI 依赖，IsAotCompatible）
-src/ClashUI.App    WinUI 3 外壳：托盘（WinUIEx TrayIcon）、主窗口（WebView2）、编排器
+src/ClashUI.Core   无 UI 依赖（IsAotCompatible）：CoreOrchestrator（生命周期与热重载编排）/ CoreRuntime（进程托管与探活）/ ConfigComposer（配置合成）/ Platform（系统代理、开机自启、提权调和）
+src/ClashUI.App    WinUI 3 外壳：Hosting（AppHost 生命周期编排）/ Tray（TrayPresenter + WinUIEx 视图）/ MainWindow（WebView2 面板）
 scripts/           图标生成等工具脚本
 ```
 
@@ -36,6 +35,7 @@ scripts/           图标生成等工具脚本
 | `settings.json` | 应用设置（端口、secret、开关状态） |
 | `ui/` | mihomo 自动下载的面板文件 |
 | `logs/` | `app.log`（应用日志，面板日志页可查看核心实时日志） |
+| `webview2/` | WebView2 用户数据目录 |
 
 ## 使用
 
@@ -48,14 +48,10 @@ scripts/           图标生成等工具脚本
 
 应用本体 `asInvoker` 启动；需要 TUN 时自动以管理员重启自身（首次一次 UAC）。日常方案：注册计划任务后由任务计划以最高权限启动，全程无 UAC。未来演进：独立 Windows Service 持有核心（参考 clash-verge-service）。
 
-## 已知限制 / 待办
+## 待办
 
-- [x] ~~核心进程加入 Job Object~~（已完成）
-- [ ] 订阅管理 UI（M1 剩余）：订阅 URL 下载/更新、profile 增删改名（切换与热重载已由托盘子菜单实现）
-- [ ] 核心自动下载与更新（M2，GitHub Releases + 哈希校验）
-- [x] ~~WebView2 用户数据目录迁到数据目录~~（已迁至 `%LOCALAPPDATA%\ClashUI\webview2`）
-- [x] ~~面板首次打开需在 metacubexd 设置页填一次 `127.0.0.1:9090` + secret~~（DashboardUrl 已带 `#/setup?hostname=&port=&secret=` 深链，setup 页自动连接）
-- [x] ~~单实例目前是「第二个实例直接退出」，未做激活转发~~（第二实例发命名信号 + `AllowSetForegroundWindow` 转授前台权，第一实例弹出面板；`--silent` 再启动不转发）
+- [ ] 订阅管理 UI：订阅 URL 下载 / 更新、profile 增删改名（切换与热重载已由托盘子菜单实现）
+- [ ] 核心自动下载与更新（GitHub Releases + 哈希校验）
 
 ## AOT 注意事项
 
