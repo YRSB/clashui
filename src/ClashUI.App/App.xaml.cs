@@ -76,6 +76,12 @@ public partial class App : Application
         if (_mainWindow is not null)
             _mainWindow.ShowNotification(message);
     }
+    internal static void ShowPanelNotification(string message)
+    {
+        AppLog.Info(message);
+        if (_mainWindow is not null)
+            _mainWindow.ShowPanelNotification(message);
+    }
 
     private static void ExitProcess() => Environment.Exit(0);
 

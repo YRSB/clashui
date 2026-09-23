@@ -194,7 +194,7 @@ public sealed class TrayPresenter : IDisposable
             try
             {
                 await ClashUI.Core.PanelProvisioner.EnsureAllAsync(
-                    msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg))).ConfigureAwait(false);
+                    msg => _dispatcher.TryEnqueue(() => App.ShowPanelNotification(msg))).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

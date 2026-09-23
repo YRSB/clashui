@@ -24,7 +24,7 @@
                 HorizontalAlignment="Stretch"
                 VerticalAlignment="Top">
                 <InfoBar.ActionButton>
-                    <Button Content="打开数据目录" Click="OpenDataFolder_Click" />
+                    <Button x:Name="BannerAction" Content="打开数据目录" Click="BannerAction_Click" />
                 </InfoBar.ActionButton>
             </InfoBar>
         </Grid>

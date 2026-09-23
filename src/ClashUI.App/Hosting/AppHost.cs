@@ -138,7 +138,7 @@ public sealed class AppHost : IDisposable
                 if (ct.IsCancellationRequested)
                     return;
                 Action<string>? notify = attempt == 0
-                    ? msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg))
+                    ? msg => _dispatcher.TryEnqueue(() => App.ShowPanelNotification(msg))
                     : null;
                 IReadOnlyList<string> available;
                 try

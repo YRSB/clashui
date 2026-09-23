@@ -117,6 +117,7 @@ public sealed partial class MainWindow : Window
         Banner.IsOpen = true;
         Banner.Title = hasExe ? "核心未运行，详情见日志" : "未找到 mihomo";
         Banner.Message = hasExe ? "可从托盘菜单重启核心" : $"请将其放入数据目录：{AppPaths.Root}";
+        SetBannerAction(retry: false);
     }
     private async Task<bool> EnsureWebViewAsync()
     {
@@ -140,6 +141,7 @@ public sealed partial class MainWindow : Window
             Banner.IsOpen = true;
             Banner.Title = "WebView2 初始化失败";
             Banner.Message = ex.Message;
+            SetBannerAction(retry: false);
             return false;
         }
     }
@@ -162,6 +164,7 @@ public sealed partial class MainWindow : Window
                         Banner.IsOpen = true;
                         Banner.Title = "面板正在下载";
                         Banner.Message = "三面板均尚未就绪，下载完成后自动加载";
+                        SetBannerAction(retry: true);
                         return;
                     }
                     targetId = available[0];
@@ -194,7 +197,46 @@ public sealed partial class MainWindow : Window
         Banner.IsOpen = true;
         Banner.Title = message;
         Banner.Message = "";
+        SetBannerAction(retry: false);
     }
-
-    private void OpenDataFolder_Click(object sender, RoutedEventArgs e) => _orch.OpenDataFolder();
+    internal void ShowPanelNotification(string message)
+    {
+        Banner.IsOpen = true;
+        Banner.Title = message;
+        Banner.Message = "";
+        SetBannerAction(retry: true);
+    }
+    private bool _bannerRetryMode;
+    private void SetBannerAction(bool retry)
+    {
+        _bannerRetryMode = retry;
+        BannerAction.Content = retry ? "重试下载" : "打开数据目录";
+        BannerAction.IsEnabled = true;
+    }
+    private void BannerAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_bannerRetryMode)
+        {
+            _orch.OpenDataFolder();
+            return;
+        }
+        BannerAction.IsEnabled = false;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await PanelProvisioner.EnsureAllAsync(
+                    msg => _dispatcher.TryEnqueue(() => ShowPanelNotification(msg))).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("面板手动重试失败", ex);
+            }
+            _dispatcher.TryEnqueue(() =>
+            {
+                BannerAction.IsEnabled = true;
+                try { _orch.NotifyPanelsChanged(); } catch { }
+            });
+        });
+    }
 }
