@@ -4,6 +4,7 @@ namespace ClashUI.Core;
 
 public static class PanelProvisioner
 {
+    private static readonly SemaphoreSlim _gate = new(1, 1);
     public static bool IsAvailable(string id)
         => File.Exists(Path.Combine(AppPaths.PanelDir(PanelCatalog.Normalize(id)), "index.html"));
 
@@ -26,24 +27,32 @@ public static class PanelProvisioner
 
     public static async Task<IReadOnlyList<string>> EnsureAllAsync(Action<string>? notify = null, CancellationToken ct = default)
     {
-        Directory.CreateDirectory(AppPaths.UiDir);
-        foreach (var panel in PanelCatalog.All)
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            var dest = AppPaths.PanelDir(panel.Id);
-            if (File.Exists(Path.Combine(dest, "index.html")))
-                continue;
-            try
+            Directory.CreateDirectory(AppPaths.UiDir);
+            foreach (var panel in PanelCatalog.All)
             {
-                await EnsureOneAsync(panel, dest, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                var dest = AppPaths.PanelDir(panel.Id);
+                if (File.Exists(Path.Combine(dest, "index.html")))
+                    continue;
+                try
+                {
+                    await EnsureOneAsync(panel, dest, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error($"面板 {panel.Id} 准备失败", ex);
+                    try { notify?.Invoke($"面板 {panel.DisplayName} 下载失败：{ex.Message}"); } catch { }
+                }
             }
-            catch (Exception ex)
-            {
-                AppLog.Error($"面板 {panel.Id} 准备失败", ex);
-                try { notify?.Invoke($"面板 {panel.DisplayName} 下载失败：{ex.Message}"); } catch { }
-            }
+            return GetAvailable();
         }
-        return GetAvailable();
+        finally
+        {
+            try { _gate.Release(); } catch { }
+        }
     }
 
     private static async Task EnsureOneAsync(PanelInfo panel, string dest, CancellationToken ct)

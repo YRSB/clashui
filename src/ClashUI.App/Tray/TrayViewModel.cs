@@ -23,6 +23,7 @@ public enum TrayCommandKind
     ToggleAutoStart,
     SwitchProfile,
     SwitchPanel,
+    RetryPanels,
     Exit
 }
 public sealed record TrayCommand(TrayCommandKind Kind, string? Payload = null, bool? Flag = null);

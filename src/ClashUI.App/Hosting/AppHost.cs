@@ -25,6 +25,7 @@ public sealed class AppHost : IDisposable
     private TrayPresenter? _presenter;
     private ITrayView? _view;
     private PanelStaticServer? _panels;
+    private CancellationTokenSource? _provisionCts;
     private bool _disposed;
     public int PanelPort => _panels?.ActualPort ?? 0;
     public CoreOrchestrator Orchestrator => _orch ?? throw new InvalidOperationException("Host not started");
@@ -124,25 +125,55 @@ public sealed class AppHost : IDisposable
         var orch = _orch;
         if (orch is null)
             return;
+        _provisionCts?.Cancel();
+        _provisionCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _provisionCts = cts;
+        var ct = cts.Token;
         _ = Task.Run(async () =>
         {
-            try
+            var delays = new[] { 30, 60, 120, 300 };
+            for (var attempt = 0; ; attempt++)
             {
-                await PanelProvisioner.EnsureAllAsync(
-                    msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg))).ConfigureAwait(false);
+                if (ct.IsCancellationRequested)
+                    return;
+                Action<string>? notify = attempt == 0
+                    ? msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg))
+                    : null;
+                IReadOnlyList<string> available;
+                try
+                {
+                    available = await PanelProvisioner.EnsureAllAsync(notify, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error("面板后台供应失败", ex);
+                    available = PanelProvisioner.GetAvailable();
+                }
+                try
+                {
+                    _dispatcher.TryEnqueue(() => orch.NotifyPanelsChanged());
+                }
+                catch
+                {
+                }
+                if (available.Count >= PanelCatalog.All.Count)
+                    return;
+                var delaySeconds = delays[Math.Min(attempt, delays.Length - 1)];
+                try
+                {
+                    await _time.Delay(TimeSpan.FromSeconds(delaySeconds), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
-            catch (Exception ex)
-            {
-                AppLog.Error("面板后台供应失败", ex);
-            }
-            try
-            {
-                _dispatcher.TryEnqueue(() => orch.NotifyPanelsChanged());
-            }
-            catch
-            {
-            }
-        });
+        }, ct);
     }
 
     private void StartTrayWithRetry(HostStartArgs args)
@@ -178,6 +209,8 @@ public sealed class AppHost : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        try { _provisionCts?.Cancel(); } catch { }
+        try { _provisionCts?.Dispose(); } catch { }
         try { _presenter?.Dispose(); } catch { }
         try { _view?.Dispose(); } catch { }
         try { _panels?.Stop(); } catch { }

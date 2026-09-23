@@ -88,6 +88,9 @@ public sealed class TrayPresenter : IDisposable
                 case TrayCommandKind.SwitchPanel:
                     if (cmd.Payload is not null) _ = _orch.SwitchPanelAsync(cmd.Payload);
                     break;
+                case TrayCommandKind.RetryPanels:
+                    RetryPanels();
+                    break;
                 case TrayCommandKind.Exit:
                     Exit();
                     break;
@@ -181,6 +184,28 @@ public sealed class TrayPresenter : IDisposable
         {
             _autoStartCache = null;
         }
+    }
+
+    private void RetryPanels()
+    {
+        var orch = _orch;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ClashUI.Core.PanelProvisioner.EnsureAllAsync(
+                    msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg))).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                ClashUI.Core.AppLog.Error("面板手动重试失败", ex);
+            }
+            _dispatcher.TryEnqueue(() =>
+            {
+                try { orch.NotifyPanelsChanged(); } catch { }
+                Refresh();
+            });
+        });
     }
 
     private void Exit()

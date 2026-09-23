@@ -20,6 +20,7 @@ public sealed class WinUiTrayView : ITrayView
     private readonly MenuFlyoutItem _openProfilesItem;
     private readonly MenuFlyoutSubItem _panelsItem = new() { Text = "面板" };
     private readonly Dictionary<string, ToggleMenuFlyoutItem> _panelToggles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly MenuFlyoutItem _retryPanelsItem = new() { Text = "重新下载缺失面板" };
     private string? _lastIconFile;
     private MenuFlyoutItem? _emptyPlaceholder;
     private readonly Action _showWindow;
@@ -51,6 +52,9 @@ public sealed class WinUiTrayView : ITrayView
         _openProfilesItem = Item("打开 profiles 目录", () => Command?.Invoke(new TrayCommand(TrayCommandKind.OpenProfilesFolder)));
         _profilesItem.Items.Add(_profilesSeparator);
         _profilesItem.Items.Add(_openProfilesItem);
+        _retryPanelsItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.RetryPanels)));
+        _panelsItem.Items.Add(new MenuFlyoutSeparator());
+        _panelsItem.Items.Add(_retryPanelsItem);
 
         _menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
         _menu.Items.Add(showItem);
@@ -209,6 +213,7 @@ public sealed class WinUiTrayView : ITrayView
             item.IsChecked = e.IsChecked;
             item.IsEnabled = e.IsEnabled;
         }
+        _retryPanelsItem.IsEnabled = panels.Any(p => !p.IsEnabled);
     }
     private static void Safe(Action action)
     {
