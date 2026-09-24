@@ -280,6 +280,7 @@ internal sealed class SystemProcessAdapter : IProcessPort
             handle.Dispose();
             throw new InvalidOperationException("无法启动 mihomo 进程");
         }
+        try { AppLog.Info($"mihomo 进程已创建 pid={proc.Id}"); } catch { }
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
         return handle;

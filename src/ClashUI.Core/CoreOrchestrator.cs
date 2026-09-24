@@ -96,10 +96,14 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
     }
 
 
-    public async void StartOnLaunch()
+    public void StartOnLaunch()
     {
-        if (!Settings.StartCoreOnLaunch) return;
-        await StartAsync();
+        if (!Settings.StartCoreOnLaunch)
+        {
+            AppLog.Info("已跳过开机启动核心（StartCoreOnLaunch=false）");
+            return;
+        }
+        _ = Task.Run(StartAsync);
     }
 
     private void StartWatcher()
@@ -143,6 +147,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
             var configPath = _composer.Compose(Settings);
             _api?.Dispose();
             _api = _apiFactory(Settings.ControllerAddr, Settings.Secret);
+            AppLog.Info($"正在启动核心：{exe}");
             if (_runtime is not null)
             {
                 var launch = new CoreLaunch(exe, $"-d \"{AppPaths.Root}\" -f \"{configPath}\"");

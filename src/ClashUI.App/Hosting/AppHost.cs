@@ -71,6 +71,7 @@ public sealed class AppHost : IDisposable
 
     public bool Start(HostStartArgs args)
     {
+        AppLog.Info($"启动：pid={Environment.ProcessId} silentArg={args.HasSilentArg} elevated={_elevationGate.IsElevated}");
         var earlyStore = _store;
         var earlySettings = earlyStore.Load();
         if (earlySettings.TunEnabled && !_elevationGate.IsElevated)
@@ -94,12 +95,12 @@ public sealed class AppHost : IDisposable
         _orch.CrashLoop += count => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification($"核心连续异常退出（订阅 provider 拉取失败时会出现），请在面板日志页查看详情 ({count})"));
         _platform.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.StateChanged += state => _platform.OnCoreStateChanged(state.CoreState);
+        _orch.StartOnLaunch();
         StartPanelServer();
         StartPanelProvisioning();
         _platform.ReconcileOnStartup(Environment.ProcessPath ?? "");
         _bridge.StartWatcher(() => _dispatcher.TryEnqueue(args.ShowWindow));
         StartSilent = args.HasSilentArg || _orch.Settings.SilentStart;
-        _orch.StartOnLaunch();
         if (!StartSilent) args.ShowWindow();
         StartTrayWithRetry(args);
         return true;
@@ -178,6 +179,11 @@ public sealed class AppHost : IDisposable
 
     private void StartTrayWithRetry(HostStartArgs args)
     {
+        _ = StartTrayWithRetryAsync(args);
+    }
+
+    private async Task StartTrayWithRetryAsync(HostStartArgs args)
+    {
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -199,7 +205,7 @@ public sealed class AppHost : IDisposable
             {
                 AppLog.Error($"托盘初始化失败（第 {attempt + 1} 次），稍后重试", ex);
                 if (attempt >= 11) break;
-                Thread.Sleep(5000);
+                try { await Task.Delay(5000); } catch { return; }
             }
         }
         AppLog.Error("托盘初始化失败，核心继续运行（无托盘图标）");

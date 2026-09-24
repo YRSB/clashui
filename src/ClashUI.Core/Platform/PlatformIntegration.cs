@@ -120,19 +120,26 @@ public sealed class PlatformIntegration : IPlatformPolicy
 
     public void ReconcileOnStartup(string exePath)
     {
-        try { _autoStart.EnsureSettings(); } catch { }
         var s = GetSettings();
         if (s.SystemProxyEnabled && _proxy.IsSetTo(s.MixedPort))
         {
             try { _proxy.Clear(); } catch { }
         }
+        _ = Task.Run(() => ReconcileSlow(s, exePath));
+    }
+
+    private void ReconcileSlow(AppSettings s, string exePath)
+    {
+        try { _autoStart.EnsureSettings(); } catch { }
         var pending = s.PendingAutoStart;
         if (pending is null) return;
         s.PendingAutoStart = null;
-        SaveSettings(s);
-        var ok = pending.Value ? _autoStart.Register(exePath) : _autoStart.Unregister();
+        try { SaveSettings(s); } catch { }
+        bool ok;
+        try { ok = pending.Value ? _autoStart.Register(exePath) : _autoStart.Unregister(); }
+        catch { ok = false; }
         var msg = ok ? $"开机自启已{(pending.Value ? "开启" : "关闭")}" : "开机自启设置失败，详情见日志";
-        Notification?.Invoke(msg);
+        try { Notification?.Invoke(msg); } catch { }
         AppLog.Info(msg);
     }
 
