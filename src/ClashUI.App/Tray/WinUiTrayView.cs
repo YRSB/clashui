@@ -1,5 +1,4 @@
 using ClashUI.Core;
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
 using WinUIEx;
 
@@ -9,22 +8,10 @@ public sealed class WinUiTrayView : ITrayView
 {
     private readonly string _assetsDir;
     private readonly TrayIcon _icon;
-    private readonly MenuFlyout _menu;
-    private readonly ToggleMenuFlyoutItem _sysProxyItem;
-    private readonly ToggleMenuFlyoutItem _tunItem;
-    private readonly ToggleMenuFlyoutItem _silentStartItem;
-    private readonly ToggleMenuFlyoutItem _autoStartItem;
-    private readonly MenuFlyoutSubItem _profilesItem = new() { Text = "配置文件" };
-    private readonly Dictionary<string, ToggleMenuFlyoutItem> _profileToggles = new(StringComparer.OrdinalIgnoreCase);
-    private readonly MenuFlyoutSeparator _profilesSeparator = new();
-    private readonly MenuFlyoutItem _openProfilesItem;
-    private readonly MenuFlyoutSubItem _panelsItem = new() { Text = "面板" };
-    private readonly Dictionary<string, ToggleMenuFlyoutItem> _panelToggles = new(StringComparer.OrdinalIgnoreCase);
-    private readonly MenuFlyoutItem _retryPanelsItem = new() { Text = "重新下载缺失面板" };
-    private string? _lastIconFile;
-    private MenuFlyoutItem? _emptyPlaceholder;
     private readonly Action _showWindow;
     private readonly Action _toggleWindow;
+    private string? _lastIconFile;
+    private TrayViewModel? _latest;
 
     public event Action<TrayCommand>? Command;
 
@@ -34,42 +21,6 @@ public sealed class WinUiTrayView : ITrayView
         _toggleWindow = toggleWindow;
         _assetsDir = Path.GetDirectoryName(iconPath) ?? AppContext.BaseDirectory;
         Command += onCommand;
-
-        var showItem = Item("显示面板", () => Command?.Invoke(new TrayCommand(TrayCommandKind.ShowPanel)));
-        var restartItem = Item("重启核心", () => Command?.Invoke(new TrayCommand(TrayCommandKind.RestartCore)));
-        var dataItem = Item("打开数据目录", () => Command?.Invoke(new TrayCommand(TrayCommandKind.OpenDataFolder)));
-        var exitItem = Item("退出", () => Command?.Invoke(new TrayCommand(TrayCommandKind.Exit)));
-
-        _sysProxyItem = new ToggleMenuFlyoutItem { Text = "系统代理" };
-        _sysProxyItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleSystemProxy)));
-        _tunItem = new ToggleMenuFlyoutItem { Text = "TUN 模式" };
-        _tunItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleTun)));
-        _silentStartItem = new ToggleMenuFlyoutItem { Text = "静默启动" };
-        _silentStartItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleSilentStart)));
-        _autoStartItem = new ToggleMenuFlyoutItem { Text = "开机自启（静默）" };
-        _autoStartItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleAutoStart, Flag: _autoStartItem.IsChecked)));
-
-        _openProfilesItem = Item("打开 profiles 目录", () => Command?.Invoke(new TrayCommand(TrayCommandKind.OpenProfilesFolder)));
-        _profilesItem.Items.Add(_profilesSeparator);
-        _profilesItem.Items.Add(_openProfilesItem);
-        _retryPanelsItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.RetryPanels)));
-        _panelsItem.Items.Add(new MenuFlyoutSeparator());
-        _panelsItem.Items.Add(_retryPanelsItem);
-
-        _menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
-        _menu.Items.Add(showItem);
-        _menu.Items.Add(_profilesItem);
-        _menu.Items.Add(_panelsItem);
-        _menu.Items.Add(_sysProxyItem);
-        _menu.Items.Add(_tunItem);
-        _menu.Items.Add(new MenuFlyoutSeparator());
-        _menu.Items.Add(restartItem);
-        _menu.Items.Add(new MenuFlyoutSeparator());
-        _menu.Items.Add(dataItem);
-        _menu.Items.Add(_silentStartItem);
-        _menu.Items.Add(_autoStartItem);
-        _menu.Items.Add(new MenuFlyoutSeparator());
-        _menu.Items.Add(exitItem);
 
         TrayIcon? icon = null;
         Exception? last = null;
@@ -98,15 +49,11 @@ public sealed class WinUiTrayView : ITrayView
         _icon = icon ?? throw new ArgumentException($"Failed to load icon from {iconPath}", nameof(iconPath), last);
         _icon.IsVisible = true;
         _icon.Selected += (_, _) => Safe(_toggleWindow);
-        _icon.ContextMenu += (_, e) => e.Flyout = _menu;
+        _icon.ContextMenu += (_, e) => e.Flyout = BuildMenu(_latest);
     }
 
     public void Render(TrayViewModel m)
     {
-        _sysProxyItem.IsChecked = m.SystemProxyChecked;
-        _tunItem.IsChecked = m.TunChecked;
-        _silentStartItem.IsChecked = m.SilentChecked;
-        _autoStartItem.IsChecked = m.AutoStartChecked;
         if (!string.Equals(_lastIconFile, m.IconFile, StringComparison.OrdinalIgnoreCase))
         {
             try
@@ -127,98 +74,81 @@ public sealed class WinUiTrayView : ITrayView
         {
             AppLog.Error("更新托盘提示失败", ex);
         }
-        RenderProfiles(m.Profiles, m.IsEmpty);
-        RenderPanels(m.Panels);
+        _latest = m;
     }
 
-    private void RenderProfiles(IReadOnlyList<ProfileEntry> profiles, bool isEmpty)
+    private MenuFlyout BuildMenu(TrayViewModel? m)
     {
-        if (isEmpty)
+        var menu = new MenuFlyout { AreOpenCloseAnimationsEnabled = false };
+
+        menu.Items.Add(Item("显示面板", () => Command?.Invoke(new TrayCommand(TrayCommandKind.ShowPanel))));
+
+        var profilesItem = new MenuFlyoutSubItem { Text = "配置文件" };
+        if (m is null || m.IsEmpty || m.Profiles.Count == 0)
         {
-            foreach (var kv in _profileToggles.ToList())
-                _profilesItem.Items.Remove(kv.Value);
-            _profileToggles.Clear();
-            if (_emptyPlaceholder is null)
-            {
-                _emptyPlaceholder = new MenuFlyoutItem { Text = "（profiles 目录为空）", IsEnabled = false };
-                _profilesItem.Items.Insert(0, _emptyPlaceholder);
-            }
-            return;
+            profilesItem.Items.Add(new MenuFlyoutItem { Text = "（profiles 目录为空）", IsEnabled = false });
         }
-        if (_emptyPlaceholder is not null)
+        else
         {
-            _profilesItem.Items.Remove(_emptyPlaceholder);
-            _emptyPlaceholder = null;
-        }
-        var wanted = new HashSet<string>(profiles.Select(p => p.Path), StringComparer.OrdinalIgnoreCase);
-        foreach (var key in _profileToggles.Keys.Where(k => !wanted.Contains(k)).ToList())
-        {
-            _profilesItem.Items.Remove(_profileToggles[key]);
-            _profileToggles.Remove(key);
-        }
-        for (var i = 0; i < profiles.Count; i++)
-        {
-            var e = profiles[i];
-            if (!_profileToggles.TryGetValue(e.Path, out var item))
+            foreach (var e in m.Profiles)
             {
                 var captured = e.Path;
-                item = new ToggleMenuFlyoutItem { Text = e.Name };
-                item.Click += (_, _) => Command?.Invoke(new TrayCommand(TrayCommandKind.SwitchProfile, captured));
-                _profileToggles[e.Path] = item;
-                _profilesItem.Items.Insert(i, item);
+                var toggle = new ToggleMenuFlyoutItem { Text = e.Name, IsChecked = e.IsChecked };
+                toggle.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.SwitchProfile, captured)));
+                profilesItem.Items.Add(toggle);
             }
-            else
-            {
-                var currentIdx = _profilesItem.Items.IndexOf(item);
-                if (currentIdx != i)
-                {
-                    _profilesItem.Items.RemoveAt(currentIdx);
-                    _profilesItem.Items.Insert(i, item);
-                }
-                if (item.Text != e.Name) item.Text = e.Name;
-            }
-            item.IsChecked = e.IsChecked;
         }
-    }
+        profilesItem.Items.Add(new MenuFlyoutSeparator());
+        profilesItem.Items.Add(Item("打开 profiles 目录", () => Command?.Invoke(new TrayCommand(TrayCommandKind.OpenProfilesFolder))));
+        menu.Items.Add(profilesItem);
 
-    private void RenderPanels(IReadOnlyList<PanelEntry> panels)
-    {
-        var wanted = new HashSet<string>(panels.Select(p => p.Id), StringComparer.OrdinalIgnoreCase);
-        foreach (var key in _panelToggles.Keys.Where(k => !wanted.Contains(k)).ToList())
+        var panelsItem = new MenuFlyoutSubItem { Text = "面板" };
+        if (m is not null)
         {
-            _panelsItem.Items.Remove(_panelToggles[key]);
-            _panelToggles.Remove(key);
-        }
-        for (var i = 0; i < panels.Count; i++)
-        {
-            var e = panels[i];
-            if (!_panelToggles.TryGetValue(e.Id, out var item))
+            foreach (var e in m.Panels)
             {
                 var captured = e.Id;
-                item = new ToggleMenuFlyoutItem { Text = e.Name };
-                item.Click += (_, _) => Command?.Invoke(new TrayCommand(TrayCommandKind.SwitchPanel, captured));
-                _panelToggles[e.Id] = item;
-                _panelsItem.Items.Insert(i, item);
+                var toggle = new ToggleMenuFlyoutItem { Text = e.Name, IsChecked = e.IsChecked, IsEnabled = e.IsEnabled };
+                toggle.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.SwitchPanel, captured)));
+                panelsItem.Items.Add(toggle);
             }
-            else
-            {
-                var currentIdx = _panelsItem.Items.IndexOf(item);
-                if (currentIdx != i)
-                {
-                    _panelsItem.Items.RemoveAt(currentIdx);
-                    _panelsItem.Items.Insert(i, item);
-                }
-                if (item.Text != e.Name) item.Text = e.Name;
-            }
-            item.IsChecked = e.IsChecked;
-            item.IsEnabled = e.IsEnabled;
         }
-        _retryPanelsItem.IsEnabled = panels.Any(p => !p.IsEnabled);
+        panelsItem.Items.Add(new MenuFlyoutSeparator());
+        var retryPanelsItem = new MenuFlyoutItem { Text = "重新下载缺失面板" };
+        retryPanelsItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.RetryPanels)));
+        retryPanelsItem.IsEnabled = m is not null && m.Panels.Any(p => !p.IsEnabled);
+        panelsItem.Items.Add(retryPanelsItem);
+        menu.Items.Add(panelsItem);
+
+        menu.Items.Add(Toggle("系统代理", m?.SystemProxyChecked ?? false, () => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleSystemProxy))));
+        menu.Items.Add(Toggle("TUN 模式", m?.TunChecked ?? false, () => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleTun))));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(Item("重启核心", () => Command?.Invoke(new TrayCommand(TrayCommandKind.RestartCore))));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(Item("打开数据目录", () => Command?.Invoke(new TrayCommand(TrayCommandKind.OpenDataFolder))));
+        menu.Items.Add(Toggle("静默启动", m?.SilentChecked ?? false, () => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleSilentStart))));
+        var autoStartItem = Toggle("开机自启（静默）", m?.AutoStartChecked ?? false, null);
+        autoStartItem.Click += (_, _) => Safe(() => Command?.Invoke(new TrayCommand(TrayCommandKind.ToggleAutoStart, Flag: autoStartItem.IsChecked)));
+        menu.Items.Add(autoStartItem);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(Item("退出", () => Command?.Invoke(new TrayCommand(TrayCommandKind.Exit))));
+
+        return menu;
     }
+
+    private ToggleMenuFlyoutItem Toggle(string text, bool isChecked, Action? onClick)
+    {
+        var item = new ToggleMenuFlyoutItem { Text = text, IsChecked = isChecked };
+        if (onClick is not null)
+            item.Click += (_, _) => Safe(onClick);
+        return item;
+    }
+
     private static void Safe(Action action)
     {
         try { action(); } catch (Exception ex) { AppLog.Error("托盘操作失败", ex); }
     }
+
     private static MenuFlyoutItem Item(string text, Action onClick)
     {
         var item = new MenuFlyoutItem { Text = text };
