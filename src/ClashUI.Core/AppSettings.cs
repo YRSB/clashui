@@ -33,19 +33,27 @@ public static partial class SettingsStore
 
     public static AppSettings Load()
     {
+        AppSettings? settings = null;
         try
         {
             if (File.Exists(AppPaths.SettingsFile))
             {
-                var settings = JsonSerializer.Deserialize(File.ReadAllText(AppPaths.SettingsFile), Ctx.Default.AppSettings);
-                if (settings is not null) return settings;
+                settings = JsonSerializer.Deserialize(File.ReadAllText(AppPaths.SettingsFile), Ctx.Default.AppSettings);
             }
         }
         catch (Exception ex)
         {
             AppLog.Error("读取 settings.json 失败，使用默认设置", ex);
+            settings = null;
         }
-        return CreateDefault();
+
+        settings ??= CreateDefault();
+        if (string.IsNullOrWhiteSpace(settings.Secret))
+        {
+            settings.Secret = NewSecret();
+            AppLog.Info("settings.json 缺少 secret，已生成新的控制器密钥");
+        }
+        return settings;
     }
 
     public static void Save(AppSettings settings)
@@ -57,9 +65,12 @@ public static partial class SettingsStore
     {
         var settings = new AppSettings
         {
-            Secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(),
+            Secret = NewSecret(),
         };
         Save(settings);
         return settings;
     }
+
+    private static string NewSecret()
+        => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 }

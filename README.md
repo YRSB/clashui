@@ -10,7 +10,7 @@ mihomo（Clash Meta 内核）的 Windows 托盘伴侣：管理核心进程与系
 - 核心进程托管：启动 / 停止 / 崩溃 3 秒后自动重启并挂载 kill-on-close Job，应用强杀 / 崩溃不残留孤儿进程；连续异常退出在面板横幅提示，去日志页查看详情
 - TUN 模式开关（需管理员，见下）
 - 系统代理开关（写注册表 + 广播刷新，立即生效）；启动时自动清理崩溃残留的指向本应用端口的系统代理（防开机断网）
-- 配置合成：订阅 profile 原样保留，注入端口 / secret / external-controller / external-ui / tun / dns
+- 配置合成：订阅 profile 只读不改写，注入端口 / secret / external-controller / external-ui / tun 开关 / dns；tun 其余字段与订阅内相对路径（规则集 / 节点 / 脚本）原样保留并按数据目录重定位；订阅损坏（HTML / 加密串 / 空文件 / 非映射）时显式报错并保留上一份运行时配置，tmp 原子替换不产生半截文件
 - mihomo 自动下载面板（`external-ui-url`，默认 metacubexd gh-pages）；面板地址带 hostname/port/secret 深链，首次打开自动连接，免手填
 - 开机自启：计划任务（ONLOGON + 最高权限，登录不弹 UAC）
 - 关闭窗口 = 隐藏到托盘；单实例互斥，再启动自动激活转发（双击 exe 弹出面板）
@@ -31,7 +31,7 @@ scripts/           图标生成等工具脚本
 |---|---|
 | `mihomo.exe` | 核心二进制（可选）：支持数据目录 / `settings.json` 的 `MihomoPath` / PATH 环境变量三种来源，按此顺序解析 |
 | `profiles/` | 订阅 / 手写 profile（YAML 原样保留） |
-| `config.runtime.yaml` | 合成后的运行时配置，核心实际加载的文件 |
+| `config.runtime.yaml` | 合成后的运行时配置，核心实际加载的文件（`rule-providers` / `proxy-providers` / `script` 的相对路径基准即本目录） |
 | `settings.json` | 应用设置（端口、secret、开关状态） |
 | `ui/` | mihomo 自动下载的面板文件 |
 | `logs/` | `app.log`（应用日志，面板日志页可查看核心实时日志） |

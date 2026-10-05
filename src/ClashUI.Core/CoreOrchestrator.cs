@@ -182,6 +182,12 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
                 return OrchestratorResult.Success;
             }
         }
+        catch (ConfigCompositionException ex)
+        {
+            AppLog.Error("配置合成失败", ex);
+            Notify($"配置合成失败：{ex.Message}");
+            return OrchestratorResult.Fail("ComposeFailed");
+        }
         catch (Exception ex)
         {
             AppLog.Error("启动核心失败", ex);
@@ -294,6 +300,12 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
                 Notify("配置热重载失败（配置文件可能有误），修复保存后会自动重试；当前连接不受影响");
                 return OrchestratorResult.Fail("ReloadFailed");
             }
+        }
+        catch (ConfigCompositionException ex)
+        {
+            AppLog.Error("配置合成失败", ex);
+            Notify($"配置合成失败，已保留上一份运行时配置：{ex.Message}");
+            return OrchestratorResult.Fail("ComposeFailed");
         }
         catch (Exception ex)
         {

@@ -18,7 +18,7 @@
 ## 核心编排（Core）
 - **核心编排器（CoreOrchestrator）**：mihomo 核心的生命周期与配置热重载的编排者。
 - **核心运行时（CoreRuntime）**：mihomo 进程的托管与探活（进程启动、健康检查、崩溃重启、Job 绑定）。
-- **配置合成（ConfigComposer）**：将用户订阅与应用注入项合成为核心实际加载的运行时配置。
+- **配置合成（ConfigComposer）**：将用户订阅与应用注入项合成为核心实际加载的运行时配置。订阅只读不改写；tun 只强制 `enable`、其余字段订阅优先；订阅内相对路径按数据目录重定位；产出经 tmp 原子替换，合成失败抛 ConfigCompositionException 并保留上一份。
 
 ## 通用
 - **通知（Notification）**：面向用户的轻量提示，经由宿主或面板横幅展示。
