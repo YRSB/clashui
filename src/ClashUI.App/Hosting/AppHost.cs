@@ -93,12 +93,13 @@ public sealed class AppHost : IDisposable
         LegacyPolicy.BindSettings(_orch.Settings);
         _orch.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.CrashLoop += count => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification($"核心连续异常退出（订阅 provider 拉取失败时会出现），请在面板日志页查看详情 ({count})"));
+        _orch.ElevationRequested += () => _dispatcher.TryEnqueue(Shutdown);
         _platform.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.StateChanged += state => _platform.OnCoreStateChanged(state.CoreState);
+        _platform.ReconcileOnStartup(Environment.ProcessPath ?? "");
         _orch.StartOnLaunch();
         StartPanelServer();
         StartPanelProvisioning();
-        _platform.ReconcileOnStartup(Environment.ProcessPath ?? "");
         _bridge.StartWatcher(() => _dispatcher.TryEnqueue(args.ShowWindow));
         StartSilent = args.HasSilentArg || _orch.Settings.SilentStart;
         if (!StartSilent) args.ShowWindow();
@@ -189,7 +190,7 @@ public sealed class AppHost : IDisposable
             try
             {
                 var view = new WinUiTrayView(args.ShowWindow, args.ToggleWindow, args.IconPath, cmd => { });
-                var presenter = new TrayPresenter(view, _orch!, _platform!, _dispatcher, args.ShowWindow);
+                var presenter = new TrayPresenter(view, _orch!, _platform!, _dispatcher, args.ShowWindow, Shutdown);
                 presenter.Start();
                 if (_disposed)
                 {
@@ -211,10 +212,28 @@ public sealed class AppHost : IDisposable
         AppLog.Error("托盘初始化失败，核心继续运行（无托盘图标）");
     }
 
+    public void Shutdown()
+    {
+        try
+        {
+            try { _proxy.Clear(); } catch { }
+            Dispose();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("退出清理失败", ex);
+        }
+        finally
+        {
+            Environment.Exit(0);
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        try { _proxy.Clear(); } catch { }
         try { _provisionCts?.Cancel(); } catch { }
         try { _provisionCts?.Dispose(); } catch { }
         try { _presenter?.Dispose(); } catch { }

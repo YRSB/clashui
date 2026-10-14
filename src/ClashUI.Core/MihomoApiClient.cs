@@ -11,9 +11,10 @@ public sealed class MihomoApiClient : IMihomoApiClient
 
     public MihomoApiClient(string controllerAddr, string secret)
     {
+        var endpoint = ControllerEndpointParser.Parse(controllerAddr);
         _http = new HttpClient
         {
-            BaseAddress = new Uri($"http://{controllerAddr}"),
+            BaseAddress = endpoint.BaseUri,
             Timeout = TimeSpan.FromSeconds(15),
         };
         if (!string.IsNullOrEmpty(secret))

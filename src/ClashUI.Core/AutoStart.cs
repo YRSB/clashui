@@ -36,10 +36,16 @@ public static class AutoStart
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                RedirectStandardOutput = true,
+                RedirectStandardOutput = false,
+                RedirectStandardError = false,
                 WorkingDirectory = Environment.SystemDirectory,
             });
-            proc!.WaitForExit(15000);
+            if (proc is null) return -1;
+            if (!proc.WaitForExit(15000))
+            {
+                try { proc.Kill(true); } catch { }
+                return -1;
+            }
             return proc.ExitCode;
         }
         catch (Exception ex)

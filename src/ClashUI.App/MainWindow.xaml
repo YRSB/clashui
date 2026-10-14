@@ -18,7 +18,7 @@
             <InfoBar
                 x:Name="Banner"
                 IsOpen="False"
-                IsClosable="False"
+                IsClosable="True"
                 Severity="Warning"
                 Title="核心未运行"
                 HorizontalAlignment="Stretch"

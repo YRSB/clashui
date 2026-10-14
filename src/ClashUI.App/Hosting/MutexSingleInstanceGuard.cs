@@ -12,7 +12,9 @@ public sealed class MutexSingleInstanceGuard : ISingleInstanceGuard
 
     public bool Acquire()
     {
-        for (var attempt = 0; attempt < 20; attempt++)
+        var isRelaunch = Environment.GetCommandLineArgs().Any(a => a is "--relaunch");
+        var maxAttempts = isRelaunch ? 8 : 1;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
             bool createdNew;
             try
@@ -22,7 +24,7 @@ public sealed class MutexSingleInstanceGuard : ISingleInstanceGuard
                 {
                     try { _mutex.Dispose(); } catch { }
                     _mutex = null;
-                    Thread.Sleep(250);
+                    if (attempt + 1 < maxAttempts) Thread.Sleep(250);
                     continue;
                 }
                 var sec = CreateWorldMutexSecurity();

@@ -46,6 +46,8 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
     private CancellationTokenSource? _probeCts;
     private CoreLaunch? _lastLaunch;
     private CoreEndpoint? _lastEndpoint;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _recentOutput = new();
+    private const int MaxRecentOutput = 30;
     private bool _disposed;
 
     public CoreState State { get; private set; } = CoreState.Stopped;
@@ -107,8 +109,9 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
             {
                 AppLog.Error("核心进程挂载 Job 失败（不影响正常启停）", ex);
             }
+            while (_recentOutput.TryDequeue(out _)) { }
             handle.Output += OnProcessOutput;
-            handle.Exited += OnExited;
+            handle.Exited += exitCode => OnExited(handle, exitCode);
             SetState(CoreState.Starting);
             _probeCts?.Cancel();
             _probeCts?.Dispose();
@@ -130,31 +133,37 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
     public async Task StopAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _userStop = true;
-        _consecutiveCrashes = 0;
-        var h = _process;
-        _process = null;
-        try { _probeCts?.Cancel(); } catch { }
-        if (h is not null)
+        await _gate.WaitAsync(ct);
+        try
         {
-            try { h.Output -= OnProcessOutput; } catch { }
-            try { h.Exited -= OnExited; } catch { }
-            try { h.Kill(true); h.WaitForExit(5000); } catch (Exception ex) { AppLog.Error("停止 mihomo 失败", ex); }
-            try { h.Dispose(); } catch { }
+            _userStop = true;
+            _consecutiveCrashes = 0;
+            var h = _process;
+            _process = null;
+            try { _probeCts?.Cancel(); } catch { }
+            if (h is not null)
+            {
+                try { h.Output -= OnProcessOutput; } catch { }
+                try { h.Kill(true); h.WaitForExit(5000); } catch (Exception ex) { AppLog.Error("停止 mihomo 失败", ex); }
+                try { h.Dispose(); } catch { }
+            }
+            SetState(CoreState.Stopped);
         }
-        SetState(CoreState.Stopped);
-        await Task.CompletedTask;
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     private async Task ProbeLoopAsync(CancellationToken ct)
     {
         try
         {
-            for (var i = 0; ; i++)
+            for (var i = 0; i < 40; i++)
             {
                 try { await _delay.Delay(TimeSpan.FromMilliseconds(300), ct); } catch (OperationCanceledException) { return; }
                 if (State != CoreState.Starting || ct.IsCancellationRequested) return;
-                if (i > 0 && i % 50 == 0) AppLog.Info("核心启动等待中（健康检查尚未通过）");
+                if (i > 0 && i % 20 == 0) AppLog.Info("核心启动等待中（健康检查尚未通过）");
                 var probe = _probe;
                 if (probe is null) return;
                 try
@@ -170,13 +179,29 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
                 catch (OperationCanceledException) { return; }
                 catch { }
             }
+            if (State == CoreState.Starting && !ct.IsCancellationRequested)
+            {
+                AppLog.Error("核心健康检查超时（12秒未响应API），已中止等待");
+                SetState(CoreState.Stopped);
+                var h = _process;
+                _process = null;
+                if (h is not null)
+                {
+                    try { h.Kill(true); } catch { }
+                    try { h.Dispose(); } catch { }
+                }
+            }
         }
         catch { }
     }
 
-    private void OnExited(int? exitCode)
+    private void OnExited(IProcessHandle handle, int? exitCode)
     {
-        var h = _process;
+        if (!ReferenceEquals(_process, handle))
+        {
+            AppLog.Info("忽略已失效的旧核心进程退出事件");
+            return;
+        }
         _process = null;
         SetState(CoreState.Stopped);
         try { _probeCts?.Cancel(); } catch { }
@@ -187,7 +212,9 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
         if (_userStop || _lastLaunch is null || _lastEndpoint is null) return;
         var launch = _lastLaunch;
         var endpoint = _lastEndpoint;
-        AppLog.Error($"mihomo 异常退出（ExitCode={exitCode?.ToString() ?? "未知"}），3 秒后自动重启");
+        var recentLines = _recentOutput.ToArray();
+        var errorDetail = recentLines.Length > 0 ? ("\n最近输出:\n" + string.Join("\n", recentLines)) : "";
+        AppLog.Error($"mihomo 异常退出（ExitCode={exitCode?.ToString() ?? "未知"}）{errorDetail}，3 秒后自动重启");
         _ = _delay.Delay(TimeSpan.FromSeconds(3), CancellationToken.None).ContinueWith(async _ =>
         {
             if (_userStop || State != CoreState.Stopped) return;
@@ -197,6 +224,9 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
 
     private void OnProcessOutput(string line)
     {
+        _recentOutput.Enqueue(line);
+        while (_recentOutput.Count > MaxRecentOutput)
+            _recentOutput.TryDequeue(out _);
         try { Output?.Invoke(line); } catch { }
     }
 
