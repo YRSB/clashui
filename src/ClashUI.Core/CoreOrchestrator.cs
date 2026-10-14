@@ -276,6 +276,11 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         try
         {
             InvalidateProfilesCache();
+            if (!File.Exists(fullPath))
+            {
+                RaiseStateChanged();
+                return;
+            }
             if (!fullPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
                 && !fullPath.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)) return;
             if (!string.Equals(fullPath, Settings.ActiveProfile, StringComparison.OrdinalIgnoreCase)) return;

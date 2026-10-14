@@ -24,13 +24,23 @@ public static class Elevation
     {
         var exe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exe)) return false;
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(arguments)) parts.Add(arguments.Trim());
+        if (!parts.Any(p => p.Contains("--relaunch", StringComparison.Ordinal)))
+            parts.Add("--relaunch");
+        if (Environment.GetCommandLineArgs().Any(a => a is "--silent" or "-s")
+            && !parts.Any(p => p.Contains("--silent", StringComparison.Ordinal) || p.Contains("-s", StringComparison.Ordinal)))
+        {
+            parts.Add("--silent");
+        }
+        var args = string.Join(" ", parts);
         try
         {
             Process.Start(new ProcessStartInfo(exe)
             {
                 UseShellExecute = true,
                 Verb = "runas",
-                Arguments = arguments,
+                Arguments = args,
             });
             return true;
         }

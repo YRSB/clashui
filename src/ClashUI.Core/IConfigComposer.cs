@@ -10,14 +10,9 @@ internal static class DashboardUrlHelper
 {
     internal static string Build(AppSettings s)
     {
-        var addr = s.ControllerAddr;
-        var sep = addr.LastIndexOf(':');
-        var host = sep > 0 ? addr[..sep] : addr;
-        var port = sep > 0 ? addr[(sep + 1)..] : "";
-        var query = $"hostname={Uri.EscapeDataString(host)}";
-        if (port.Length > 0) query += $"&port={Uri.EscapeDataString(port)}";
-        query += $"&secret={Uri.EscapeDataString(s.Secret ?? "")}";
-        return $"http://{addr}/ui/#/setup?{query}";
+        var endpoint = ControllerEndpointParser.Parse(s.ControllerAddr);
+        var query = $"hostname={Uri.EscapeDataString(endpoint.ConnectHost)}&port={endpoint.Port}&secret={Uri.EscapeDataString(s.Secret ?? "")}";
+        return $"http://{endpoint.DisplayAddr}/ui/#/setup?{query}";
     }
 }
 

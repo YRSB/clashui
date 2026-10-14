@@ -52,8 +52,11 @@ public sealed class PlatformIntegration : IPlatformPolicy
         if (proxyResult.Kind == PolicyResultKind.Failed) return Task.FromResult(proxyResult);
         var tunResult = ApplyTun(s, desired.TunEnabled);
         if (tunResult.Kind != PolicyResultKind.Ok) return Task.FromResult(tunResult);
-        var autoResult = ApplyAutoStart(s, desired.AutoStartEnabled, desired.ExePath);
-        if (autoResult.Kind != PolicyResultKind.Ok) return Task.FromResult(autoResult);
+        if (desired.AutoStartEnabled.HasValue)
+        {
+            var autoResult = ApplyAutoStart(s, desired.AutoStartEnabled.Value, desired.ExePath);
+            if (autoResult.Kind != PolicyResultKind.Ok) return Task.FromResult(autoResult);
+        }
         return Task.FromResult(new PolicyResult(PolicyResultKind.Ok));
     }
 

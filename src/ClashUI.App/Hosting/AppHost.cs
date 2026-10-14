@@ -97,8 +97,8 @@ public sealed class AppHost : IDisposable
         _platform.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.StateChanged += state => _platform.OnCoreStateChanged(state.CoreState);
         _platform.ReconcileOnStartup(Environment.ProcessPath ?? "");
-        _orch.StartOnLaunch();
         StartPanelServer();
+        _orch.StartOnLaunch();
         StartPanelProvisioning();
         _bridge.StartWatcher(() => _dispatcher.TryEnqueue(args.ShowWindow));
         StartSilent = args.HasSilentArg || _orch.Settings.SilentStart;
@@ -216,7 +216,9 @@ public sealed class AppHost : IDisposable
     {
         try
         {
-            try { _proxy.Clear(); } catch { }
+            try { _guard.Dispose(); } catch { }
+            try { _bridge.Dispose(); } catch { }
+            ClearProxyIfOwned();
             Dispose();
         }
         catch (Exception ex)
@@ -229,11 +231,21 @@ public sealed class AppHost : IDisposable
         }
     }
 
+    private void ClearProxyIfOwned()
+    {
+        if (_orch is { } orch && (orch.Settings.SystemProxyEnabled || _proxy.IsSetTo(orch.Settings.MixedPort)))
+        {
+            try { _proxy.Clear(); } catch { }
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        try { _proxy.Clear(); } catch { }
+        try { _guard.Dispose(); } catch { }
+        try { _bridge.Dispose(); } catch { }
+        ClearProxyIfOwned();
         try { _provisionCts?.Cancel(); } catch { }
         try { _provisionCts?.Dispose(); } catch { }
         try { _presenter?.Dispose(); } catch { }
@@ -243,7 +255,5 @@ public sealed class AppHost : IDisposable
         try { _orch?.Stop(); } catch { }
         try { _orch?.Dispose(); } catch { }
         try { _runtime.Dispose(); } catch { }
-        try { _guard.Dispose(); } catch { }
-        try { _bridge.Dispose(); } catch { }
     }
 }

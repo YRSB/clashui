@@ -107,7 +107,7 @@ public sealed class TrayPresenter : IDisposable
     private void HandleTunToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, !s.TunEnabled, GetAutoStartRegistered(), s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, !s.TunEnabled, null, s.SilentStart, Environment.ProcessPath ?? "");
         var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
         if (r.Kind == PolicyResultKind.Ok)
         {
@@ -131,7 +131,7 @@ public sealed class TrayPresenter : IDisposable
     private void HandleSystemProxyToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(!s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, GetAutoStartRegistered(), s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(!s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, null, s.SilentStart, Environment.ProcessPath ?? "");
         var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
         if (r.Kind == PolicyResultKind.Failed)
             App.ShowGlobalNotification($"切换系统代理失败：{r.Cause}");
@@ -140,7 +140,7 @@ public sealed class TrayPresenter : IDisposable
     private void HandleSilentStartToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, GetAutoStartRegistered(), !s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, null, !s.SilentStart, Environment.ProcessPath ?? "");
         _ = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
     }
 

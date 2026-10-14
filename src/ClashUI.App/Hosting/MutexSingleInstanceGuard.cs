@@ -13,7 +13,7 @@ public sealed class MutexSingleInstanceGuard : ISingleInstanceGuard
     public bool Acquire()
     {
         var isRelaunch = Environment.GetCommandLineArgs().Any(a => a is "--relaunch");
-        var maxAttempts = isRelaunch ? 8 : 1;
+        var maxAttempts = isRelaunch ? 24 : 1;
         for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
             bool createdNew;
