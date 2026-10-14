@@ -10,27 +10,25 @@ public sealed class TrayPresenter : IDisposable
     private readonly IPlatformPolicy _platform;
     private readonly IDispatcher _dispatcher;
     private readonly Action _showWindow;
+    private readonly Action _shutdown;
     private bool _disposed;
     private bool? _autoStartCache;
-    private long _autoStartCacheAt;
 
-    public TrayPresenter(ITrayView view, CoreOrchestrator orch, IPlatformPolicy platform, IDispatcher dispatcher, Action showWindow)
+    public TrayPresenter(ITrayView view, CoreOrchestrator orch, IPlatformPolicy platform, IDispatcher dispatcher, Action showWindow, Action? shutdown = null)
     {
         _view = view;
         _orch = orch;
         _platform = platform;
         _dispatcher = dispatcher;
         _showWindow = showWindow;
+        _shutdown = shutdown ?? App.Shutdown;
         _view.Command += OnCommand;
         _orch.StateChanged += OnStateChanged;
-        _platform.Notification += OnPlatformNotification;
     }
 
     public void Start() => Refresh();
 
     private void OnStateChanged(AppState _) => _dispatcher.TryEnqueue(Refresh);
-
-    private void OnPlatformNotification(string msg) => App.ShowGlobalNotification(msg);
 
     public void RefreshNow() => Refresh();
 
@@ -109,7 +107,7 @@ public sealed class TrayPresenter : IDisposable
     private void HandleTunToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, !s.TunEnabled, GetAutoStartRegistered(), s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, !s.TunEnabled, null, s.SilentStart, Environment.ProcessPath ?? "");
         var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
         if (r.Kind == PolicyResultKind.Ok)
         {
@@ -133,7 +131,7 @@ public sealed class TrayPresenter : IDisposable
     private void HandleSystemProxyToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(!s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, GetAutoStartRegistered(), s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(!s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, null, s.SilentStart, Environment.ProcessPath ?? "");
         var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
         if (r.Kind == PolicyResultKind.Failed)
             App.ShowGlobalNotification($"切换系统代理失败：{r.Cause}");
@@ -142,18 +140,24 @@ public sealed class TrayPresenter : IDisposable
     private void HandleSilentStartToggle()
     {
         var s = _orch.Settings;
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, GetAutoStartRegistered(), !s.SilentStart, Environment.ProcessPath ?? "");
+        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, null, !s.SilentStart, Environment.ProcessPath ?? "");
         _ = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
     }
 
     private bool GetAutoStartRegistered()
     {
-        var now = Environment.TickCount64;
-        if (_autoStartCache.HasValue && now - _autoStartCacheAt < 10000) return _autoStartCache.Value;
-        var v = _platform.IsAutoStartRegistered();
-        _autoStartCache = v;
-        _autoStartCacheAt = now;
-        return v;
+        if (_autoStartCache.HasValue) return _autoStartCache.Value;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var v = _platform.IsAutoStartRegistered();
+                _autoStartCache = v;
+                _dispatcher.TryEnqueue(Refresh);
+            }
+            catch { }
+        });
+        return false;
     }
 
     private void HandleAutoStartToggle(bool? wantEnable)
@@ -164,11 +168,13 @@ public sealed class TrayPresenter : IDisposable
             var enable = wantEnable ?? !GetAutoStartRegistered();
             var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, enable, s.SilentStart, Environment.ProcessPath ?? "");
             var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
-            _autoStartCache = null;
-            if (r.Kind == PolicyResultKind.Ok && GetAutoStartRegistered() != enable)
+            if (r.Kind == PolicyResultKind.Ok)
             {
-                AppLog.Error($"开机自启未生效：目标 {enable}");
-                r = new PolicyResult(PolicyResultKind.Failed, "状态未生效");
+                _autoStartCache = enable;
+            }
+            else
+            {
+                _autoStartCache = null;
             }
             if (r.Kind == PolicyResultKind.NeedsElevation)
             {
@@ -180,9 +186,10 @@ public sealed class TrayPresenter : IDisposable
             else if (r.Kind == PolicyResultKind.Failed)
                 App.ShowGlobalNotification("修改开机自启失败，详情见日志");
         }
-        finally
+        catch (Exception ex)
         {
             _autoStartCache = null;
+            AppLog.Error("切换开机自启失败", ex);
         }
     }
 
@@ -211,16 +218,13 @@ public sealed class TrayPresenter : IDisposable
     private void Exit()
     {
         try { _view.Dispose(); } catch { }
-        try { _orch.Stop(); } catch { }
-        try { _orch.Dispose(); } catch { }
-        Environment.Exit(0);
+        _shutdown();
     }
 
     public void Dispose()
     {
         _disposed = true;
         try { _orch.StateChanged -= OnStateChanged; } catch { }
-        try { _platform.Notification -= OnPlatformNotification; } catch { }
         try { _view.Command -= OnCommand; } catch { }
         try { _view.Dispose(); } catch { }
     }

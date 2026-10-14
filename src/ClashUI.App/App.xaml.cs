@@ -63,10 +63,13 @@ public partial class App : Application
         _mainWindow.HideToTray();
     }
 
-    private static void Shutdown()
+    public static void Shutdown()
     {
-        try { _host?.Dispose(); } catch { }
-        _host = null;
+        if (_host is not null)
+        {
+            _host.Shutdown();
+            return;
+        }
         ExitProcess();
     }
 

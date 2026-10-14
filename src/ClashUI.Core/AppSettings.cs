@@ -56,9 +56,18 @@ public static partial class SettingsStore
         return settings;
     }
 
+    private static readonly object _saveLock = new();
+
     public static void Save(AppSettings settings)
     {
-        File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(settings, Ctx.Default.AppSettings));
+        lock (_saveLock)
+        {
+            var dir = Path.GetDirectoryName(AppPaths.SettingsFile);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            var tmp = AppPaths.SettingsFile + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(settings, Ctx.Default.AppSettings));
+            File.Move(tmp, AppPaths.SettingsFile, overwrite: true);
+        }
     }
 
     private static AppSettings CreateDefault()

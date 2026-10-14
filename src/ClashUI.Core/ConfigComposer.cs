@@ -39,10 +39,9 @@ rules:
         Set(root, "external-controller", settings.ControllerAddr);
         Set(root, "secret", settings.Secret);
         Set(root, "external-ui", "ui");
-        Set(root, "external-ui-url", settings.DashboardUrl);
         ApplyTun(root, settings.TunEnabled);
-        if (settings.TunEnabled && !root.Children.ContainsKey("dns"))
-            SetNode(root, "dns", BuildDns());
+        if (settings.TunEnabled)
+            EnsureTunDns(root);
         RelocateAssets(root, profilePath);
 
         var stream = new YamlStream();
@@ -192,14 +191,15 @@ rules:
         }
     }
 
-    private static YamlMappingNode BuildDns() => new()
+    private static void EnsureTunDns(YamlMappingNode root)
     {
-        { "enable", "true" },
-        { "enhanced-mode", "fake-ip" },
-        { "fake-ip-range", "198.18.0.1/16" },
-        { "nameserver", new YamlSequenceNode(
-            new YamlScalarNode("223.5.5.5"), new YamlScalarNode("119.29.29.29")) },
-    };
+        var dns = GetOrAddMapping(root, "dns");
+        Set(dns, "enable", "true");
+        SetIfMissing(dns, "enhanced-mode", new YamlScalarNode("fake-ip"));
+        SetIfMissing(dns, "fake-ip-range", new YamlScalarNode("198.18.0.1/16"));
+        SetIfMissing(dns, "nameserver", new YamlSequenceNode(
+            new YamlScalarNode("223.5.5.5"), new YamlScalarNode("119.29.29.29")));
+    }
 }
 
 public sealed class ConfigCompositionException(string message, Exception? inner = null)

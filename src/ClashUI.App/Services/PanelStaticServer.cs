@@ -154,8 +154,9 @@ public sealed class PanelStaticServer : IDisposable
                 string file = full;
                 if (!File.Exists(file))
                 {
+                    var ext = Path.GetExtension(relative);
                     var fallback = Path.Combine(rootFull, "index.html");
-                    if (File.Exists(fallback))
+                    if (string.IsNullOrEmpty(ext) && File.Exists(fallback))
                         file = fallback;
                     else
                     {
@@ -163,23 +164,33 @@ public sealed class PanelStaticServer : IDisposable
                         return;
                     }
                 }
-                byte[] body;
-                try
-                {
-                    body = File.ReadAllBytes(file);
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Error($"静态面板读取失败 {file}", ex);
-                    WriteStatus(stream, method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
-                    return;
-                }
-                WriteStatus(stream, method, 200, "OK", MimeFor(file), body);
+                ServeFile(stream, method, file);
             }
             catch (Exception ex)
             {
                 AppLog.Error("静态面板请求失败", ex);
             }
+        }
+    }
+
+    private static void ServeFile(NetworkStream stream, string method, string file)
+    {
+        try
+        {
+            using var fs = File.OpenRead(file);
+            var isHtml = file.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+                         || file.EndsWith(".htm", StringComparison.OrdinalIgnoreCase);
+            var cacheControl = isHtml ? "no-cache" : "public, max-age=3600";
+            var header = $"HTTP/1.1 200 OK\r\nContent-Type: {MimeFor(file)}\r\nContent-Length: {fs.Length}\r\nConnection: close\r\nCache-Control: {cacheControl}\r\n\r\n";
+            var headerBytes = Encoding.ASCII.GetBytes(header);
+            stream.Write(headerBytes, 0, headerBytes.Length);
+            if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) && fs.Length > 0)
+                fs.CopyTo(stream);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"静态面板读取失败 {file}", ex);
+            WriteStatus(stream, method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
         }
     }
 
@@ -206,8 +217,6 @@ public sealed class PanelStaticServer : IDisposable
             var text = Encoding.ASCII.GetString(ms.GetBuffer(), 0, (int)ms.Length);
             if (text.Contains("\r\n\r\n", StringComparison.Ordinal))
                 return text;
-            if (!stream.DataAvailable)
-                break;
         }
         if (ms.Length == 0)
             return null;

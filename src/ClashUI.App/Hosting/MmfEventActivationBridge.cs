@@ -67,6 +67,7 @@ public sealed class MmfEventActivationBridge : IActivationBridge
             forwarded = true;
         }
         catch { }
+        if (forwarded) return;
         try
         {
             using var pidFile = MemoryMappedFile.OpenExisting(LegacyActivatePidMapName);

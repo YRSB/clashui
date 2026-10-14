@@ -17,6 +17,10 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherQueue _dispatcher;
     private bool _webReady;
     private string _loadedUrl = "";
+    private Task<bool>? _webViewInitTask;
+    private readonly SemaphoreSlim _navGate = new(1, 1);
+    private bool _isTransientNotification;
+    private DispatcherTimer? _notificationDismissTimer;
 
     public MainWindow(CoreOrchestrator orch)
     {
@@ -105,23 +109,40 @@ public sealed partial class MainWindow : Window
 
     private void OnStateChanged()
     {
-        var running = _orch.IsCoreRunning;
-        if (running)
+        var coreState = _orch.State.CoreState;
+        if (coreState == CoreState.Running)
         {
-            Banner.IsOpen = false;
+            if (!_isTransientNotification)
+                Banner.IsOpen = false;
             _ = NavigatePanelAsync();
             return;
         }
-        var settings = _orch.Settings;
-        var hasExe = CoreLocator.Resolve(settings.MihomoPath) is not null;
-        Banner.IsOpen = true;
-        Banner.Title = hasExe ? "核心未运行，详情见日志" : "未找到 mihomo";
-        Banner.Message = hasExe ? "可从托盘菜单重启核心" : $"请将其放入数据目录：{AppPaths.Root}";
-        SetBannerAction(retry: false);
+        if (coreState == CoreState.Starting)
+        {
+            if (!_isTransientNotification)
+                Banner.IsOpen = false;
+            return;
+        }
+        if (!_isTransientNotification)
+        {
+            var settings = _orch.Settings;
+            var hasExe = CoreLocator.Resolve(settings.MihomoPath) is not null;
+            Banner.IsOpen = true;
+            Banner.Severity = InfoBarSeverity.Warning;
+            Banner.Title = hasExe ? "核心未运行，详情见日志" : "未找到 mihomo";
+            Banner.Message = hasExe ? "可从托盘菜单重启核心" : $"请将其放入数据目录：{AppPaths.Root}";
+            SetBannerAction(retry: false);
+        }
     }
-    private async Task<bool> EnsureWebViewAsync()
+
+    private Task<bool> EnsureWebViewAsync()
     {
-        if (_webReady) return true;
+        if (_webReady) return Task.FromResult(true);
+        return _webViewInitTask ??= DoEnsureWebViewAsync();
+    }
+
+    private async Task<bool> DoEnsureWebViewAsync()
+    {
         try
         {
             var options = new CoreWebView2EnvironmentOptions
@@ -137,79 +158,127 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _webViewInitTask = null;
             AppLog.Error("WebView2 初始化失败", ex);
             Banner.IsOpen = true;
+            Banner.Severity = InfoBarSeverity.Error;
             Banner.Title = "WebView2 初始化失败";
             Banner.Message = ex.Message;
             SetBannerAction(retry: false);
             return false;
         }
     }
+
     private async Task NavigatePanelAsync()
     {
-        if (!_orch.IsCoreRunning) return;
-        string target;
+        await _navGate.WaitAsync();
         try
         {
-            var settings = _orch.Settings;
-            if (_orch.Composer is DefaultConfigComposer defaults && defaults.PanelPort > 0)
+            if (!_orch.IsCoreRunning) return;
+            string target;
+            try
             {
-                var active = PanelCatalog.Normalize(settings.ActivePanel);
-                var targetId = active;
-                if (!PanelProvisioner.IsAvailable(active))
+                var settings = _orch.Settings;
+                if (_orch.Composer is DefaultConfigComposer defaults && defaults.PanelPort > 0)
                 {
-                    var available = PanelProvisioner.GetAvailable();
-                    if (available.Count == 0)
+                    var active = PanelCatalog.Normalize(settings.ActivePanel);
+                    var targetId = active;
+                    if (!PanelProvisioner.IsAvailable(active))
                     {
-                        Banner.IsOpen = true;
-                        Banner.Title = "面板正在下载";
-                        Banner.Message = "三面板均尚未就绪，下载完成后自动加载";
-                        SetBannerAction(retry: true);
-                        return;
+                        var available = PanelProvisioner.GetAvailable();
+                        if (available.Count == 0)
+                        {
+                            Banner.IsOpen = true;
+                            Banner.Severity = InfoBarSeverity.Informational;
+                            Banner.Title = "面板正在下载";
+                            Banner.Message = "三面板均尚未就绪，下载完成后自动加载";
+                            SetBannerAction(retry: true);
+                            return;
+                        }
+                        targetId = available[0];
                     }
-                    targetId = available[0];
+                    target = PanelUrlBuilder.Build(targetId, settings.ControllerAddr, settings.Secret, defaults.PanelPort);
                 }
-                target = PanelUrlBuilder.Build(targetId, settings.ControllerAddr, settings.Secret, defaults.PanelPort);
+                else
+                {
+                    target = _orch.Composer.DashboardUrlFor(settings);
+                }
             }
-            else
+            catch
             {
-                target = _orch.Composer.DashboardUrlFor(settings);
+                return;
+            }
+            if (target == _loadedUrl) return;
+            if (!await EnsureWebViewAsync()) return;
+            try
+            {
+                Panel.Source = new Uri(target);
+                _loadedUrl = target;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("面板导航失败", ex);
             }
         }
-        catch
+        finally
         {
-            return;
-        }
-        if (target == _loadedUrl) return;
-        if (!await EnsureWebViewAsync()) return;
-        try
-        {
-            Panel.Source = new Uri(target);
-            _loadedUrl = target;
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("面板导航失败", ex);
+            _navGate.Release();
         }
     }
+
     internal void ShowNotification(string message)
     {
+        if (!_dispatcher.HasThreadAccess)
+        {
+            _dispatcher.TryEnqueue(() => ShowNotification(message));
+            return;
+        }
+        _isTransientNotification = true;
         Banner.IsOpen = true;
+        Banner.Severity = InfoBarSeverity.Informational;
         Banner.Title = message;
         Banner.Message = "";
-        SetBannerAction(retry: false);
+        BannerAction.Visibility = Visibility.Collapsed;
+        ScheduleDismissBanner();
     }
+
     internal void ShowPanelNotification(string message)
     {
+        if (!_dispatcher.HasThreadAccess)
+        {
+            _dispatcher.TryEnqueue(() => ShowPanelNotification(message));
+            return;
+        }
+        _isTransientNotification = true;
         Banner.IsOpen = true;
+        Banner.Severity = InfoBarSeverity.Informational;
         Banner.Title = message;
         Banner.Message = "";
         SetBannerAction(retry: true);
+        ScheduleDismissBanner();
     }
+
+    private void ScheduleDismissBanner()
+    {
+        _notificationDismissTimer?.Stop();
+        _notificationDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        _notificationDismissTimer.Tick += (_, _) =>
+        {
+            _notificationDismissTimer?.Stop();
+            _isTransientNotification = false;
+            if (_orch.IsCoreRunning)
+                Banner.IsOpen = false;
+            else
+                OnStateChanged();
+        };
+        _notificationDismissTimer.Start();
+    }
+
     private bool _bannerRetryMode;
     private void SetBannerAction(bool retry)
     {
         _bannerRetryMode = retry;
+        BannerAction.Visibility = Visibility.Visible;
         BannerAction.Content = retry ? "重试下载" : "打开数据目录";
         BannerAction.IsEnabled = true;
     }

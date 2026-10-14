@@ -21,6 +21,8 @@ public sealed class FileProfileWatcher : IProfileWatcher
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
             EnableRaisingEvents = true,
         };
+        _watcher.Created += (_, e) => Changed?.Invoke(e.FullPath);
+        _watcher.Deleted += (_, e) => Changed?.Invoke(e.FullPath);
         _watcher.Changed += (_, e) => Changed?.Invoke(e.FullPath);
         _watcher.Renamed += (_, e) => Changed?.Invoke(e.FullPath);
     }

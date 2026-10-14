@@ -35,6 +35,8 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
     public event Action<AppState>? StateChanged;
     public event Action<string>? Notification;
     public event Action<int>? CrashLoop;
+    public event Action? ElevationRequested;
+    private readonly object _debounceGate = new();
 
     public CoreOrchestrator(
         ISettingsStore settingsStore,
@@ -133,7 +135,11 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
             {
                 Notify("TUN 模式需要管理员权限，正在以管理员身份重新启动…");
                 await _time.Delay(500, CancellationToken.None);
-                if (Elevation.RelaunchElevated()) return OrchestratorResult.Fail("NeedsElevation");
+                if (Elevation.RelaunchElevated())
+                {
+                    ElevationRequested?.Invoke();
+                    return OrchestratorResult.Fail("NeedsElevation");
+                }
                 return OrchestratorResult.Fail("TunNeedsElevation");
             }
 
@@ -210,6 +216,25 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         _settingsStore.Save(Settings);
         RaiseStateChanged();
 
+        if (CurrentState == CoreState.Starting)
+        {
+            Notify($"已选择 {Path.GetFileName(profilePath)}，核心正在启动中，启动后将自动应用");
+            _ = Task.Run(async () =>
+            {
+                for (var i = 0; i < 40; i++)
+                {
+                    await _time.Delay(300, CancellationToken.None);
+                    if (CurrentState == CoreState.Running)
+                    {
+                        await ReloadCoreConfigAsync($"已应用 {Path.GetFileName(profilePath)}", restartOnFailure: true);
+                        break;
+                    }
+                    if (CurrentState == CoreState.Stopped) break;
+                }
+            });
+            return OrchestratorResult.Success;
+        }
+
         if (!IsCoreRunning || _api is null)
         {
             Notify($"已选择 {Path.GetFileName(profilePath)}，核心未运行，下次启动生效");
@@ -251,15 +276,23 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         try
         {
             InvalidateProfilesCache();
+            if (!File.Exists(fullPath))
+            {
+                RaiseStateChanged();
+                return;
+            }
             if (!fullPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
                 && !fullPath.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)) return;
             if (!string.Equals(fullPath, Settings.ActiveProfile, StringComparison.OrdinalIgnoreCase)) return;
 
-            _debounceCts?.Cancel();
-            _debounceCts?.Dispose();
-            var cts = new CancellationTokenSource();
-            _debounceCts = cts;
-            _ = DebouncedReloadAsync(cts.Token);
+            lock (_debounceGate)
+            {
+                _debounceCts?.Cancel();
+                _debounceCts?.Dispose();
+                var cts = new CancellationTokenSource();
+                _debounceCts = cts;
+                _ = DebouncedReloadAsync(cts.Token);
+            }
         }
         catch (Exception ex)
         {
