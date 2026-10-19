@@ -10,7 +10,7 @@ public partial class App : Application
     private static MainWindow? _mainWindow;
 
     public static CoreOrchestrator Orchestrator => _host!.Orchestrator;
-    public static PolicyOps Policy { get; private set; } = null!;
+    public static PolicyOps Policy => _host!.LegacyPolicy;
     public static bool StartSilent => _host?.StartSilent ?? false;
 
     public App() => InitializeComponent();
@@ -26,14 +26,17 @@ public partial class App : Application
         }
         try
         {
-            var ok = host.Start(new HostStartArgs(ShowMainWindow, ToggleMainWindow, Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"), HasSilentArg));
+            _host = host;
+            var ok = host.Start(new HostStartArgs(
+                ShowMainWindow,
+                ToggleMainWindow,
+                Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"),
+                HasSilentArg));
             if (!ok)
             {
                 ExitProcess();
                 return;
             }
-            _host = host;
-            Policy = _host.LegacyPolicy;
         }
         catch (Exception ex)
         {
