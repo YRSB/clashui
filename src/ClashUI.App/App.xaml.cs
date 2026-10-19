@@ -10,7 +10,6 @@ public partial class App : Application
     private static MainWindow? _mainWindow;
 
     public static CoreOrchestrator Orchestrator => _host!.Orchestrator;
-    public static PolicyOps Policy => _host!.LegacyPolicy;
     public static bool StartSilent => _host?.StartSilent ?? false;
 
     public App() => InitializeComponent();
@@ -89,7 +88,11 @@ public partial class App : Application
             _mainWindow.ShowPanelNotification(message);
     }
 
-    private static void ExitProcess() => Environment.Exit(0);
+    private static void ExitProcess()
+    {
+        try { AppLog.Flush(); } catch { }
+        Environment.Exit(0);
+    }
 
     private static bool HasSilentArg =>
         Environment.GetCommandLineArgs().Any(a => a is "--silent" or "-s");

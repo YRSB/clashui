@@ -13,15 +13,62 @@ public static class AutoStart
 
     public static bool Register(string exePath)
     {
-        var ok = Run("schtasks", $"/Create /F /TN {TaskName} /SC ONLOGON /RL HIGHEST /TR \"\\\"{exePath}\\\" --silent\"") == 0;
-        if (ok) EnsureTaskSettings();
-        return ok;
+        var tmpXml = Path.Combine(Path.GetTempPath(), $"clashui-task-{Guid.NewGuid():N}.xml");
+        try
+        {
+            var escapedExe = EscapeXml(exePath);
+            var xml = $"""
+                <?xml version="1.0" encoding="UTF-16"?>
+                <Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+                  <RegistrationInfo>
+                    <Description>ClashUI AutoStart</Description>
+                  </RegistrationInfo>
+                  <Principals>
+                    <Principal id="Author">
+                      <LogonType>InteractiveToken</LogonType>
+                      <RunLevel>HighestAvailable</RunLevel>
+                    </Principal>
+                  </Principals>
+                  <Settings>
+                    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+                    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+                    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+                    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+                    <Priority>7</Priority>
+                  </Settings>
+                  <Triggers>
+                    <LogonTrigger>
+                      <Enabled>true</Enabled>
+                    </LogonTrigger>
+                  </Triggers>
+                  <Actions Context="Author">
+                    <Exec>
+                      <Command>{escapedExe}</Command>
+                      <Arguments>--silent</Arguments>
+                    </Exec>
+                  </Actions>
+                </Task>
+                """;
+            File.WriteAllText(tmpXml, xml, System.Text.Encoding.Unicode);
+            return Run("schtasks", $"/Create /F /TN {TaskName} /XML \"{tmpXml}\"") == 0;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("写入开机自启任务 XML 失败", ex);
+            return false;
+        }
+        finally
+        {
+            try { if (File.Exists(tmpXml)) File.Delete(tmpXml); } catch { }
+        }
     }
 
-    public static void EnsureTaskSettings()
-    {
-        Run("powershell", "-NoProfile -NonInteractive -Command \"Set-ScheduledTask -TaskName ClashUI -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero))\"");
-    }
+    private static string EscapeXml(string value) =>
+        value.Replace("&", "&amp;")
+             .Replace("<", "&lt;")
+             .Replace(">", "&gt;")
+             .Replace("\"", "&quot;")
+             .Replace("'", "&apos;");
 
     public static bool Unregister()
     {

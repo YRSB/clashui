@@ -23,11 +23,18 @@ public sealed class MihomoApiClient : IMihomoApiClient
 
     public async Task<string?> GetVersionAsync(CancellationToken ct = default)
     {
-        using var resp = await _http.GetAsync("/version", ct);
-        if (!resp.IsSuccessStatusCode) return null;
-        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-        return doc.RootElement.TryGetProperty("version", out var version) ? version.GetString() : null;
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(2));
+            using var resp = await _http.GetAsync("/version", cts.Token);
+            if (!resp.IsSuccessStatusCode) return null;
+            await using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cts.Token);
+            return doc.RootElement.TryGetProperty("version", out var version) ? version.GetString() : null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch { return null; }
     }
 
     public async Task<bool> ReloadConfigAsync(string configPath, CancellationToken ct = default)

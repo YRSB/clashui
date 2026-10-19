@@ -31,7 +31,6 @@ public sealed class AppHost : IDisposable
     public CoreOrchestrator Orchestrator => _orch ?? throw new InvalidOperationException("Host not started");
     public IPlatformPolicy Platform => _platform ?? throw new InvalidOperationException("Host not started");
     public ISettingsStore Store => _store;
-    public PolicyOps LegacyPolicy { get; private set; } = null!;
     public bool StartSilent { get; private set; }
 
 
@@ -85,12 +84,10 @@ public sealed class AppHost : IDisposable
             earlyStore.Save(earlySettings);
             AppLog.Info("已取消提权，TUN 已临时关闭，下次可在托盘中重新开启");
         }
-        _orch = new CoreOrchestrator(_store, _composer, _runtime, _watcher, _time, _apiFactory);
+        _orch = new CoreOrchestrator(_store, _composer, _runtime, _watcher, _time, _apiFactory, earlySettings);
         _platform = new PlatformIntegration(_store, _proxy, _autoStart, _elevationOps, () => _orch.IsCoreRunning);
         _orch.Initialize();
         _platform.BindSettings(_orch.Settings);
-        LegacyPolicy = new PolicyOps(_store, _proxy, _autoStart, _elevationOps);
-        LegacyPolicy.BindSettings(_orch.Settings);
         _orch.Notification += msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg));
         _orch.CrashLoop += count => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification($"核心连续异常退出（订阅 provider 拉取失败时会出现），请在面板日志页查看详情 ({count})"));
         _orch.ElevationRequested += () => _dispatcher.TryEnqueue(Shutdown);
@@ -190,7 +187,7 @@ public sealed class AppHost : IDisposable
             try
             {
                 var view = new WinUiTrayView(args.ShowWindow, args.ToggleWindow, args.IconPath, cmd => { });
-                var presenter = new TrayPresenter(view, _orch!, _platform!, _dispatcher, args.ShowWindow, Shutdown);
+                var presenter = new TrayPresenter(view, _orch!, _platform!, _dispatcher, args.ShowWindow, Shutdown, msg => _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(msg)));
                 presenter.Start();
                 if (_disposed)
                 {
@@ -227,6 +224,7 @@ public sealed class AppHost : IDisposable
         }
         finally
         {
+            try { AppLog.Flush(); } catch { }
             Environment.Exit(0);
         }
     }

@@ -24,6 +24,7 @@ public sealed class DefaultConfigComposer : IConfigComposer
         => PanelPort > 0 ? PanelUrlBuilder.Build(s.ActivePanel, s.ControllerAddr, s.Secret, PanelPort) : DashboardUrlHelper.Build(s);
 }
 
+#if DEBUG
 public sealed class FakeConfigComposer : IConfigComposer
 {
     public Func<AppSettings, string>? ComposeFunc;
@@ -42,3 +43,4 @@ public sealed class FakeConfigComposer : IConfigComposer
         return DashboardUrlHelper.Build(s);
     }
 }
+#endif

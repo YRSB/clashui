@@ -20,6 +20,28 @@ rules:
   - MATCH,DIRECT
 """;
 
+    private static readonly YamlScalarNode KeyMixedPort = new("mixed-port");
+    private static readonly YamlScalarNode KeyLogLevel = new("log-level");
+    private static readonly YamlScalarNode KeyExternalController = new("external-controller");
+    private static readonly YamlScalarNode KeySecret = new("secret");
+    private static readonly YamlScalarNode KeyExternalUi = new("external-ui");
+    private static readonly YamlScalarNode KeyTun = new("tun");
+    private static readonly YamlScalarNode KeyEnable = new("enable");
+    private static readonly YamlScalarNode KeyStack = new("stack");
+    private static readonly YamlScalarNode KeyAutoRoute = new("auto-route");
+    private static readonly YamlScalarNode KeyAutoDetectInterface = new("auto-detect-interface");
+    private static readonly YamlScalarNode KeyStrictRoute = new("strict-route");
+    private static readonly YamlScalarNode KeyDnsHijack = new("dns-hijack");
+    private static readonly YamlScalarNode KeyDns = new("dns");
+    private static readonly YamlScalarNode KeyEnhancedMode = new("enhanced-mode");
+    private static readonly YamlScalarNode KeyFakeIpRange = new("fake-ip-range");
+    private static readonly YamlScalarNode KeyNameserver = new("nameserver");
+    private static readonly YamlScalarNode KeyRuleProviders = new("rule-providers");
+    private static readonly YamlScalarNode KeyProxyProviders = new("proxy-providers");
+    private static readonly YamlScalarNode KeyScript = new("script");
+    private static readonly YamlScalarNode KeyShortcut = new("shortcut");
+    private static readonly YamlScalarNode KeyPath = new("path");
+
     public static string ResolveProfile(string activeProfile, bool createDefault)
     {
         if (!string.IsNullOrWhiteSpace(activeProfile) && File.Exists(activeProfile)) return activeProfile;
@@ -29,26 +51,50 @@ rules:
         return fallback;
     }
 
+    private static readonly Lock _cacheGate = new();
+    private static (string ProfilePath, DateTime LastWriteUtc, long FileLength, int SettingsHash)? _lastComposition;
+
     public static string Compose(AppSettings settings)
     {
-        var profilePath = ResolveProfile(settings.ActiveProfile, createDefault: true);
-        var root = LoadRoot(profilePath);
+        lock (_cacheGate)
+        {
+            var profilePath = ResolveProfile(settings.ActiveProfile, createDefault: true);
+            var fi = new FileInfo(profilePath);
+            var lastWriteUtc = fi.Exists ? fi.LastWriteTimeUtc : DateTime.MinValue;
+            var fileLength = fi.Exists ? fi.Length : 0;
+            int settingsHash = HashCode.Combine(settings.MixedPort, settings.ControllerAddr, settings.Secret, settings.TunEnabled);
 
-        Set(root, "mixed-port", settings.MixedPort.ToString());
-        Set(root, "log-level", "info");
-        Set(root, "external-controller", settings.ControllerAddr);
-        Set(root, "secret", settings.Secret);
-        Set(root, "external-ui", "ui");
-        ApplyTun(root, settings.TunEnabled);
-        if (settings.TunEnabled)
-            EnsureTunDns(root);
-        RelocateAssets(root, profilePath);
+            if (_lastComposition is { } last &&
+                string.Equals(last.ProfilePath, profilePath, StringComparison.OrdinalIgnoreCase) &&
+                last.LastWriteUtc == lastWriteUtc &&
+                last.FileLength == fileLength &&
+                last.SettingsHash == settingsHash &&
+                File.Exists(AppPaths.RuntimeConfigFile))
+            {
+                return AppPaths.RuntimeConfigFile;
+            }
 
-        var stream = new YamlStream();
-        stream.Documents.Add(new YamlDocument(root));
-        WriteAtomic(stream);
-        AppLog.Info($"已合成运行时配置：{Path.GetFileName(profilePath)} -> {AppPaths.RuntimeConfigFile}");
-        return AppPaths.RuntimeConfigFile;
+            var root = LoadRoot(profilePath);
+
+            Set(root, KeyMixedPort, settings.MixedPort.ToString());
+            SetIfMissing(root, KeyLogLevel, new YamlScalarNode("warning"));
+            Set(root, KeyExternalController, settings.ControllerAddr);
+            Set(root, KeySecret, settings.Secret);
+            Set(root, KeyExternalUi, "ui");
+            ApplyTun(root, settings.TunEnabled);
+            if (settings.TunEnabled)
+                EnsureTunDns(root);
+            RelocateAssets(root, profilePath);
+
+            var stream = new YamlStream();
+            stream.Documents.Add(new YamlDocument(root));
+            WriteAtomic(stream);
+
+            _lastComposition = (profilePath, lastWriteUtc, fileLength, settingsHash);
+
+            AppLog.Info($"已合成运行时配置：{Path.GetFileName(profilePath)} -> {AppPaths.RuntimeConfigFile}");
+            return AppPaths.RuntimeConfigFile;
+        }
     }
 
     private static YamlMappingNode LoadRoot(string profilePath)
@@ -80,45 +126,57 @@ rules:
         return map;
     }
 
-    private static void Set(YamlMappingNode root, string key, string value)
-        => SetNode(root, key, new YamlScalarNode(value));
-
-    private static void SetNode(YamlMappingNode root, string key, YamlNode value)
+    private static void Set(YamlMappingNode root, YamlScalarNode lookupKey, string value)
     {
-        var k = new YamlScalarNode(key);
-        if (root.Children.ContainsKey(k)) root.Children.Remove(k);
-        root.Children.Add(k, value);
+        var scalar = new YamlScalarNode(value);
+        if (root.Children.ContainsKey(lookupKey))
+            root.Children[lookupKey] = scalar;
+        else
+            root.Children.Add(new YamlScalarNode(lookupKey.Value), scalar);
+    }
+
+    private static void Set(YamlMappingNode root, string key, string value)
+        => Set(root, new YamlScalarNode(key), value);
+
+    private static void SetIfMissing(YamlMappingNode root, YamlScalarNode lookupKey, YamlNode value)
+    {
+        if (!root.Children.ContainsKey(lookupKey))
+            root.Children.Add(new YamlScalarNode(lookupKey.Value), value);
     }
 
     private static void SetIfMissing(YamlMappingNode root, string key, YamlNode value)
-    {
-        if (!root.Children.ContainsKey(new YamlScalarNode(key))) SetNode(root, key, value);
-    }
+        => SetIfMissing(root, new YamlScalarNode(key), value);
+
+    private static YamlMappingNode? GetMapping(YamlMappingNode root, YamlScalarNode lookupKey)
+        => root.Children.TryGetValue(lookupKey, out var node) ? node as YamlMappingNode : null;
 
     private static YamlMappingNode? GetMapping(YamlMappingNode root, string key)
-        => root.Children.TryGetValue(new YamlScalarNode(key), out var node) ? node as YamlMappingNode : null;
+        => GetMapping(root, new YamlScalarNode(key));
 
-    private static YamlMappingNode GetOrAddMapping(YamlMappingNode root, string key)
+    private static YamlMappingNode GetOrAddMapping(YamlMappingNode root, YamlScalarNode lookupKey)
     {
-        if (GetMapping(root, key) is { } existing) return existing;
-        if (root.Children.TryGetValue(new YamlScalarNode(key), out var bad))
-            throw new ConfigCompositionException($"配置项 {key} 不是键值映射（实际为 {bad.NodeType}），请修正订阅文件");
+        if (GetMapping(root, lookupKey) is { } existing) return existing;
+        if (root.Children.TryGetValue(lookupKey, out var bad))
+            throw new ConfigCompositionException($"配置项 {lookupKey.Value} 不是键值映射（实际为 {bad.NodeType}），请修正订阅文件");
 
         var created = new YamlMappingNode();
-        SetNode(root, key, created);
+        root.Children.Add(new YamlScalarNode(lookupKey.Value), created);
         return created;
     }
+
+    private static YamlMappingNode GetOrAddMapping(YamlMappingNode root, string key)
+        => GetOrAddMapping(root, new YamlScalarNode(key));
 
     /// <summary>TUN 只强制 enable，其余字段订阅优先，缺失时才填应用默认值。</summary>
     private static void ApplyTun(YamlMappingNode root, bool enable)
     {
-        var tun = GetOrAddMapping(root, "tun");
-        Set(tun, "enable", enable ? "true" : "false");
-        SetIfMissing(tun, "stack", new YamlScalarNode("mixed"));
-        SetIfMissing(tun, "auto-route", new YamlScalarNode("true"));
-        SetIfMissing(tun, "auto-detect-interface", new YamlScalarNode("true"));
-        SetIfMissing(tun, "strict-route", new YamlScalarNode("false"));
-        SetIfMissing(tun, "dns-hijack", new YamlSequenceNode(new YamlScalarNode("any:53")));
+        var tun = GetOrAddMapping(root, KeyTun);
+        Set(tun, KeyEnable, enable ? "true" : "false");
+        SetIfMissing(tun, KeyStack, new YamlScalarNode("mixed"));
+        SetIfMissing(tun, KeyAutoRoute, new YamlScalarNode("true"));
+        SetIfMissing(tun, KeyAutoDetectInterface, new YamlScalarNode("true"));
+        SetIfMissing(tun, KeyStrictRoute, new YamlScalarNode("false"));
+        SetIfMissing(tun, KeyDnsHijack, new YamlSequenceNode(new YamlScalarNode("any:53")));
     }
 
     /// <summary>
@@ -127,27 +185,27 @@ rules:
     /// </summary>
     private static void RelocateAssets(YamlMappingNode root, string profilePath)
     {
-        RelocateProviderPaths(root, "rule-providers", profilePath);
-        RelocateProviderPaths(root, "proxy-providers", profilePath);
+        RelocateProviderPaths(root, KeyRuleProviders, profilePath);
+        RelocateProviderPaths(root, KeyProxyProviders, profilePath);
 
-        if (GetMapping(root, "script") is { } script) RelocatePath(script, "shortcut", profilePath);
+        if (GetMapping(root, KeyScript) is { } script) RelocatePath(script, KeyShortcut, profilePath);
     }
 
-    private static void RelocateProviderPaths(YamlMappingNode root, string section, string profilePath)
+    private static void RelocateProviderPaths(YamlMappingNode root, YamlScalarNode section, string profilePath)
     {
         if (GetMapping(root, section) is not { } providers) return;
         foreach (var entry in providers.Children)
-            if (entry.Value is YamlMappingNode provider) RelocatePath(provider, "path", profilePath);
+            if (entry.Value is YamlMappingNode provider) RelocatePath(provider, KeyPath, profilePath);
     }
 
-    private static void RelocatePath(YamlMappingNode owner, string key, string profilePath)
+    private static void RelocatePath(YamlMappingNode owner, YamlScalarNode key, string profilePath)
     {
-        if (!owner.Children.TryGetValue(new YamlScalarNode(key), out var node)) return;
+        if (!owner.Children.TryGetValue(key, out var node)) return;
         if (node is not YamlScalarNode { Value: { } raw }) return;
         if (Relocate(raw, profilePath) is not { } relocated || relocated == raw) return;
 
-        AppLog.Info($"重定位 {key}：{raw} -> {relocated}");
-        owner.Children[new YamlScalarNode(key)] = new YamlScalarNode(relocated);
+        AppLog.Info($"重定位 {key.Value}：{raw} -> {relocated}");
+        owner.Children[key] = new YamlScalarNode(relocated);
     }
 
     private static string? Relocate(string raw, string profilePath)
@@ -180,7 +238,6 @@ rules:
             {
                 stream.Save(writer, false);
                 writer.Flush();
-                if (writer.BaseStream is FileStream fs) fs.Flush(flushToDisk: true);
             }
             File.Move(tmp, target, overwrite: true);
         }
@@ -193,11 +250,11 @@ rules:
 
     private static void EnsureTunDns(YamlMappingNode root)
     {
-        var dns = GetOrAddMapping(root, "dns");
-        Set(dns, "enable", "true");
-        SetIfMissing(dns, "enhanced-mode", new YamlScalarNode("fake-ip"));
-        SetIfMissing(dns, "fake-ip-range", new YamlScalarNode("198.18.0.1/16"));
-        SetIfMissing(dns, "nameserver", new YamlSequenceNode(
+        var dns = GetOrAddMapping(root, KeyDns);
+        Set(dns, KeyEnable, "true");
+        SetIfMissing(dns, KeyEnhancedMode, new YamlScalarNode("fake-ip"));
+        SetIfMissing(dns, KeyFakeIpRange, new YamlScalarNode("198.18.0.1/16"));
+        SetIfMissing(dns, KeyNameserver, new YamlSequenceNode(
             new YamlScalarNode("223.5.5.5"), new YamlScalarNode("119.29.29.29")));
     }
 }

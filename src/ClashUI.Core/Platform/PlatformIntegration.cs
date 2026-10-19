@@ -38,31 +38,52 @@ public sealed class PlatformIntegration : IPlatformPolicy
     public Task<PolicyResult> ApplyAsync(DesiredState desired)
     {
         var s = GetSettings();
+        bool changed = false;
         if (s.MixedPort != desired.MixedPort)
         {
             s.MixedPort = desired.MixedPort;
-            SaveSettings(s);
+            changed = true;
         }
         if (s.SilentStart != desired.SilentStart)
         {
             s.SilentStart = desired.SilentStart;
-            SaveSettings(s);
+            changed = true;
         }
-        var proxyResult = ApplySystemProxy(s, desired.SystemProxyEnabled, desired.MixedPort);
-        if (proxyResult.Kind == PolicyResultKind.Failed) return Task.FromResult(proxyResult);
-        var tunResult = ApplyTun(s, desired.TunEnabled);
-        if (tunResult.Kind != PolicyResultKind.Ok) return Task.FromResult(tunResult);
+
+        var (proxyResult, proxyChanged) = ApplySystemProxy(s, desired.SystemProxyEnabled, desired.MixedPort);
+        changed |= proxyChanged;
+        if (proxyResult.Kind == PolicyResultKind.Failed)
+        {
+            if (changed) SaveSettings(s);
+            return Task.FromResult(proxyResult);
+        }
+
+        var (tunResult, tunChanged) = ApplyTun(s, desired.TunEnabled);
+        changed |= tunChanged;
+        if (tunResult.Kind != PolicyResultKind.Ok)
+        {
+            if (changed) SaveSettings(s);
+            return Task.FromResult(tunResult);
+        }
+
         if (desired.AutoStartEnabled.HasValue)
         {
-            var autoResult = ApplyAutoStart(s, desired.AutoStartEnabled.Value, desired.ExePath);
-            if (autoResult.Kind != PolicyResultKind.Ok) return Task.FromResult(autoResult);
+            var (autoResult, autoChanged) = ApplyAutoStart(s, desired.AutoStartEnabled.Value, desired.ExePath);
+            changed |= autoChanged;
+            if (autoResult.Kind != PolicyResultKind.Ok)
+            {
+                if (changed) SaveSettings(s);
+                return Task.FromResult(autoResult);
+            }
         }
+
+        if (changed) SaveSettings(s);
         return Task.FromResult(new PolicyResult(PolicyResultKind.Ok));
     }
 
-    private PolicyResult ApplySystemProxy(AppSettings s, bool enabled, int port)
+    private (PolicyResult Result, bool Changed) ApplySystemProxy(AppSettings s, bool enabled, int port)
     {
-        if (s.SystemProxyEnabled == enabled) return new PolicyResult(PolicyResultKind.Ok);
+        if (s.SystemProxyEnabled == enabled) return (new PolicyResult(PolicyResultKind.Ok), false);
         try
         {
             if (enabled)
@@ -75,50 +96,46 @@ public sealed class PlatformIntegration : IPlatformPolicy
                 _proxy.Clear();
             }
             s.SystemProxyEnabled = enabled;
-            SaveSettings(s);
-            return new PolicyResult(PolicyResultKind.Ok);
+            return (new PolicyResult(PolicyResultKind.Ok), true);
         }
         catch (Exception ex)
         {
             AppLog.Error("切换系统代理失败", ex);
-            return new PolicyResult(PolicyResultKind.Failed, ex.Message);
+            return (new PolicyResult(PolicyResultKind.Failed, ex.Message), false);
         }
     }
 
-    private PolicyResult ApplyTun(AppSettings s, bool enabled)
+    private (PolicyResult Result, bool Changed) ApplyTun(AppSettings s, bool enabled)
     {
-        if (s.TunEnabled == enabled) return new PolicyResult(PolicyResultKind.Ok);
-        s.TunEnabled = enabled;
-        SaveSettings(s);
+        if (s.TunEnabled == enabled) return (new PolicyResult(PolicyResultKind.Ok), false);
         if (!_elevation.IsElevated)
         {
+            s.TunEnabled = enabled;
             if (_elevation.RelaunchElevated())
-                return new PolicyResult(PolicyResultKind.NeedsElevation);
+                return (new PolicyResult(PolicyResultKind.NeedsElevation), true);
             s.TunEnabled = !enabled;
-            SaveSettings(s);
-            return new PolicyResult(PolicyResultKind.CancelledByUser);
+            return (new PolicyResult(PolicyResultKind.CancelledByUser), false);
         }
-        return new PolicyResult(PolicyResultKind.Ok);
+        s.TunEnabled = enabled;
+        return (new PolicyResult(PolicyResultKind.Ok), true);
     }
 
-    private PolicyResult ApplyAutoStart(AppSettings s, bool enable, string exePath)
+    private (PolicyResult Result, bool Changed) ApplyAutoStart(AppSettings s, bool enable, string exePath)
     {
         var currently = _autoStart.IsRegistered();
-        if (enable == currently && s.PendingAutoStart is null) return new PolicyResult(PolicyResultKind.Ok);
-        if (!enable && !currently) return new PolicyResult(PolicyResultKind.Ok);
+        if (enable == currently && s.PendingAutoStart is null) return (new PolicyResult(PolicyResultKind.Ok), false);
+        if (!enable && !currently) return (new PolicyResult(PolicyResultKind.Ok), false);
         var ok = enable ? _autoStart.Register(exePath) : _autoStart.Unregister();
-        if (ok) return new PolicyResult(PolicyResultKind.Ok);
+        if (ok) return (new PolicyResult(PolicyResultKind.Ok), false);
         if (!_elevation.IsElevated)
         {
             s.PendingAutoStart = enable;
-            SaveSettings(s);
             if (_elevation.RelaunchElevated())
-                return new PolicyResult(PolicyResultKind.NeedsElevation);
+                return (new PolicyResult(PolicyResultKind.NeedsElevation), true);
             s.PendingAutoStart = null;
-            SaveSettings(s);
-            return new PolicyResult(PolicyResultKind.CancelledByUser);
+            return (new PolicyResult(PolicyResultKind.CancelledByUser), false);
         }
-        return new PolicyResult(PolicyResultKind.Failed, "修改开机自启失败");
+        return (new PolicyResult(PolicyResultKind.Failed, "修改开机自启失败"), false);
     }
 
     public void ReconcileOnStartup(string exePath)
@@ -133,7 +150,6 @@ public sealed class PlatformIntegration : IPlatformPolicy
 
     private void ReconcileSlow(AppSettings s, string exePath)
     {
-        try { _autoStart.EnsureSettings(); } catch { }
         var pending = s.PendingAutoStart;
         if (pending is null) return;
         s.PendingAutoStart = null;
@@ -162,6 +178,7 @@ public sealed class PlatformIntegration : IPlatformPolicy
     public bool IsAutoStartRegistered() => _autoStart.IsRegistered();
 }
 
+#if DEBUG
 public sealed class FakePlatformPolicy : IPlatformPolicy
 {
     public DesiredState? LastDesired { get; private set; }
@@ -175,3 +192,4 @@ public sealed class FakePlatformPolicy : IPlatformPolicy
     public void BindSettings(AppSettings shared) { }
     public void RaiseNotification(string msg) => Notification?.Invoke(msg);
 }
+#endif

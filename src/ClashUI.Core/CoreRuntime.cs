@@ -14,7 +14,7 @@ public sealed record CoreOutcome(bool Ok, CoreFailure Failure, string? Version, 
 }
 
 #region Ports
-public interface IProbePort : IDisposable { Task<string?> GetVersionAsync(CancellationToken ct); }
+public interface IProbePort : IDisposable { Task<string?> GetVersionAsync(CancellationToken ct = default); }
 public interface IProcessHandle : IDisposable
 {
     bool HasExited { get; }
@@ -37,6 +37,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
     private readonly IDelayPort _delay;
     private readonly IProbePort? _probeOverride;
     private IProbePort? _probe;
+    private bool _ownsProbe;
     private IProcessHandle? _process;
     private IntPtr _job = IntPtr.Zero;
     private DateTime _startedAt;
@@ -46,7 +47,10 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
     private CancellationTokenSource? _probeCts;
     private CoreLaunch? _lastLaunch;
     private CoreEndpoint? _lastEndpoint;
-    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _recentOutput = new();
+    private readonly string?[] _recentOutput = new string?[MaxRecentOutput];
+    private int _recentOutputIndex;
+    private int _recentOutputCount;
+    private readonly Lock _outputGate = new();
     private const int MaxRecentOutput = 30;
     private bool _disposed;
 
@@ -64,7 +68,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
         _processPort = processOverride ?? new SystemProcessAdapter();
     }
 
-    public async Task<CoreOutcome> StartAsync(CoreLaunch launch, CoreEndpoint endpoint, CancellationToken ct = default)
+    public async Task<CoreOutcome> StartAsync(CoreLaunch launch, CoreEndpoint endpoint, IProbePort? probe = null, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (ct.IsCancellationRequested) return CoreOutcome.Fail(CoreFailure.Cancelled);
@@ -79,14 +83,22 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
             _userStop = false;
             _lastLaunch = launch;
             _lastEndpoint = endpoint;
-            if (_probeOverride is null)
+            if (_probeOverride is not null)
             {
-                try { _probe?.Dispose(); } catch { }
-                _probe = new HttpProbeAdapter(endpoint.ControllerAddr, endpoint.Secret);
+                _probe = _probeOverride;
+                _ownsProbe = false;
+            }
+            else if (probe is not null)
+            {
+                if (_ownsProbe) { try { _probe?.Dispose(); } catch { } }
+                _probe = probe;
+                _ownsProbe = false;
             }
             else
             {
-                _probe = _probeOverride;
+                if (_ownsProbe) { try { _probe?.Dispose(); } catch { } }
+                _probe = new HttpProbeAdapter(endpoint.ControllerAddr, endpoint.Secret);
+                _ownsProbe = true;
             }
             IProcessHandle handle;
             try
@@ -109,7 +121,11 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
             {
                 AppLog.Error("核心进程挂载 Job 失败（不影响正常启停）", ex);
             }
-            while (_recentOutput.TryDequeue(out _)) { }
+            lock (_outputGate)
+            {
+                Array.Clear(_recentOutput, 0, _recentOutput.Length);
+                _recentOutputCount = 0;
+            }
             handle.Output += OnProcessOutput;
             handle.Exited += exitCode => OnExited(handle, exitCode);
             SetState(CoreState.Starting);
@@ -161,14 +177,15 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
         {
             for (var i = 0; i < 40; i++)
             {
-                try { await _delay.Delay(TimeSpan.FromMilliseconds(300), ct); } catch (OperationCanceledException) { return; }
+                var delayMs = i switch { 0 => 50, 1 => 100, 2 => 150, _ => 300 };
+                try { await _delay.Delay(TimeSpan.FromMilliseconds(delayMs), ct); } catch (OperationCanceledException) { return; }
                 if (State != CoreState.Starting || ct.IsCancellationRequested) return;
                 if (i > 0 && i % 20 == 0) AppLog.Info("核心启动等待中（健康检查尚未通过）");
                 var probe = _probe;
                 if (probe is null) return;
                 try
                 {
-                    var v = await probe.GetVersionAsync(CancellationToken.None);
+                    var v = await probe.GetVersionAsync(ct);
                     if (v is not null)
                     {
                         SetState(CoreState.Running);
@@ -176,7 +193,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
                         return;
                     }
                 }
-                catch (OperationCanceledException) { return; }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
                 catch { }
             }
             if (State == CoreState.Starting && !ct.IsCancellationRequested)
@@ -212,21 +229,43 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
         if (_userStop || _lastLaunch is null || _lastEndpoint is null) return;
         var launch = _lastLaunch;
         var endpoint = _lastEndpoint;
-        var recentLines = _recentOutput.ToArray();
+        var recentLines = GetRecentOutputSnapshot();
         var errorDetail = recentLines.Length > 0 ? ("\n最近输出:\n" + string.Join("\n", recentLines)) : "";
         AppLog.Error($"mihomo 异常退出（ExitCode={exitCode?.ToString() ?? "未知"}）{errorDetail}，3 秒后自动重启");
         _ = _delay.Delay(TimeSpan.FromSeconds(3), CancellationToken.None).ContinueWith(async _ =>
         {
             if (_userStop || State != CoreState.Stopped) return;
-            try { await StartAsync(launch, endpoint); } catch { SetState(CoreState.Stopped); }
+            try { await StartAsync(launch, endpoint, _probe); } catch { SetState(CoreState.Stopped); }
         }, TaskScheduler.Default);
+    }
+
+    private string[] GetRecentOutputSnapshot()
+    {
+        lock (_outputGate)
+        {
+            var count = _recentOutputCount;
+            if (count == 0) return Array.Empty<string>();
+            var recentLines = new string[count];
+            var start = _recentOutputCount < MaxRecentOutput ? 0 : _recentOutputIndex;
+            for (var i = 0; i < count; i++)
+            {
+                recentLines[i] = _recentOutput[(start + i) % MaxRecentOutput] ?? "";
+            }
+            return recentLines;
+        }
     }
 
     private void OnProcessOutput(string line)
     {
-        _recentOutput.Enqueue(line);
-        while (_recentOutput.Count > MaxRecentOutput)
-            _recentOutput.TryDequeue(out _);
+        if (State != CoreState.Running)
+        {
+            lock (_outputGate)
+            {
+                _recentOutput[_recentOutputIndex] = line;
+                _recentOutputIndex = (_recentOutputIndex + 1) % MaxRecentOutput;
+                if (_recentOutputCount < MaxRecentOutput) _recentOutputCount++;
+            }
+        }
         try { Output?.Invoke(line); } catch { }
     }
 
@@ -248,7 +287,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
         try { _gate.Dispose(); } catch { }
         try
         {
-            if (_probe is not null && _probe != _probeOverride) _probe.Dispose();
+            if (_ownsProbe) _probe?.Dispose();
         }
         catch { }
         try { (_processPort as IDisposable)?.Dispose(); } catch { }
@@ -352,6 +391,7 @@ internal sealed class SystemDelayAdapter : IDelayPort
     public Task Delay(TimeSpan d, CancellationToken ct) => Task.Delay(d, ct);
 }
 
+#if DEBUG
 public sealed class FakeProbeAdapter : IProbePort
 {
     public Queue<string?> VersionSequence { get; } = new();
@@ -456,4 +496,5 @@ public sealed class ManualDelayAdapter : IDelayPort
     public void Advance(int ms) => Advance(TimeSpan.FromMilliseconds(ms));
     public int PendingCount { get { lock (_gate) return _pending.Count; } }
 }
+#endif
 #endregion

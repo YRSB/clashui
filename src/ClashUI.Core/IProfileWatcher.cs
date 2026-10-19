@@ -30,6 +30,7 @@ public sealed class FileProfileWatcher : IProfileWatcher
     public void Dispose() => _watcher?.Dispose();
 }
 
+#if DEBUG
 public sealed class ManualProfileWatcher : IProfileWatcher
 {
     public event Action<string>? Changed;
@@ -40,3 +41,4 @@ public sealed class ManualProfileWatcher : IProfileWatcher
 
     public void Dispose() { }
 }
+#endif
