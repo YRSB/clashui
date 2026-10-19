@@ -17,9 +17,11 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
     private bool _disposed;
     private IReadOnlyList<string>? _profilesCache;
     private readonly Lock _profilesGate = new();
+    private string? _pendingProfileSwitch;
 
     private CoreState CurrentState => _runtime?.State ?? _legacyRuntime?.State ?? CoreState.Stopped;
 
+    public CoreState CoreState => CurrentState;
     public AppSettings Settings { get; private set; }
     public IConfigComposer Composer => _composer;
     public AppState State => new(
@@ -44,7 +46,8 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         CoreRuntime runtime,
         IProfileWatcher watcher,
         ITimeSource time,
-        Func<string, string, IMihomoApiClient>? apiFactory = null)
+        Func<string, string, IMihomoApiClient>? apiFactory = null,
+        AppSettings? initialSettings = null)
     {
         _settingsStore = settingsStore;
         _composer = composer;
@@ -52,7 +55,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         _watcher = watcher;
         _time = time;
         _apiFactory = apiFactory ?? ((addr, secret) => new MihomoApiClient(addr, secret));
-        Settings = _settingsStore.Load();
+        Settings = initialSettings ?? _settingsStore.Load();
 
         _runtime.StateChanged += OnRuntimeStateChanged;
         _runtime.CrashLoop += c =>
@@ -91,9 +94,12 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
     public void Initialize()
     {
         AppPaths.Ensure();
-        Settings = _settingsStore.Load();
-        Settings.ActiveProfile = ConfigComposer.ResolveProfile(Settings.ActiveProfile, createDefault: true);
-        _settingsStore.Save(Settings);
+        var resolved = ConfigComposer.ResolveProfile(Settings.ActiveProfile, createDefault: true);
+        if (!string.Equals(Settings.ActiveProfile, resolved, StringComparison.Ordinal))
+        {
+            Settings.ActiveProfile = resolved;
+            _settingsStore.Save(Settings);
+        }
         StartWatcher();
     }
 
@@ -115,6 +121,14 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 
     private void OnRuntimeStateChanged(CoreState state)
     {
+        if (state == CoreState.Running && _pendingProfileSwitch is { } pending)
+        {
+            _pendingProfileSwitch = null;
+            _ = Task.Run(async () =>
+            {
+                await ReloadCoreConfigAsync($"已应用 {Path.GetFileName(pending)}", restartOnFailure: true);
+            });
+        }
         RaiseStateChanged();
     }
 
@@ -158,7 +172,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
             {
                 var launch = new CoreLaunch(exe, $"-d \"{AppPaths.Root}\" -f \"{configPath}\"");
                 var endpoint = new CoreEndpoint(Settings.ControllerAddr, Settings.Secret);
-                var outcome = await _runtime.StartAsync(launch, endpoint);
+                var outcome = await _runtime.StartAsync(launch, endpoint, _api);
                 if (!outcome.Ok)
                 {
                     if (outcome.Failure == CoreFailure.AlreadyRunning) return OrchestratorResult.Fail("AlreadyRunning");
@@ -218,20 +232,8 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 
         if (CurrentState == CoreState.Starting)
         {
+            _pendingProfileSwitch = profilePath;
             Notify($"已选择 {Path.GetFileName(profilePath)}，核心正在启动中，启动后将自动应用");
-            _ = Task.Run(async () =>
-            {
-                for (var i = 0; i < 40; i++)
-                {
-                    await _time.Delay(300, CancellationToken.None);
-                    if (CurrentState == CoreState.Running)
-                    {
-                        await ReloadCoreConfigAsync($"已应用 {Path.GetFileName(profilePath)}", restartOnFailure: true);
-                        break;
-                    }
-                    if (CurrentState == CoreState.Stopped) break;
-                }
-            });
             return OrchestratorResult.Success;
         }
 
@@ -273,6 +275,9 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 
     private void OnProfileFileMaybeChanged(string fullPath)
     {
+        if (!fullPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
+            && !fullPath.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)) return;
+
         try
         {
             InvalidateProfilesCache();
@@ -281,9 +286,11 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
                 RaiseStateChanged();
                 return;
             }
-            if (!fullPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
-                && !fullPath.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)) return;
-            if (!string.Equals(fullPath, Settings.ActiveProfile, StringComparison.OrdinalIgnoreCase)) return;
+            if (!string.Equals(fullPath, Settings.ActiveProfile, StringComparison.OrdinalIgnoreCase))
+            {
+                RaiseStateChanged();
+                return;
+            }
 
             lock (_debounceGate)
             {

@@ -5,11 +5,19 @@ namespace ClashUI.Core;
 public static class PanelProvisioner
 {
     private static readonly SemaphoreSlim _gate = new(1, 1);
+    private static volatile IReadOnlyList<string>? _availableCache;
+
     public static bool IsAvailable(string id)
-        => File.Exists(Path.Combine(AppPaths.PanelDir(PanelCatalog.Normalize(id)), "index.html"));
+    {
+        var norm = PanelCatalog.Normalize(id);
+        var cached = _availableCache;
+        if (cached is not null) return cached.Contains(norm);
+        return File.Exists(Path.Combine(AppPaths.PanelDir(norm), "index.html"));
+    }
 
     public static IReadOnlyList<string> GetAvailable()
     {
+        if (_availableCache is { } cached) return cached;
         var list = new List<string>();
         foreach (var p in PanelCatalog.All)
         {
@@ -22,6 +30,7 @@ public static class PanelProvisioner
             {
             }
         }
+        _availableCache = list;
         return list;
     }
 
@@ -31,6 +40,9 @@ public static class PanelProvisioner
         try
         {
             Directory.CreateDirectory(AppPaths.UiDir);
+            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("ClashUI");
+
             foreach (var panel in PanelCatalog.All)
             {
                 ct.ThrowIfCancellationRequested();
@@ -39,7 +51,7 @@ public static class PanelProvisioner
                     continue;
                 try
                 {
-                    await EnsureOneAsync(panel, dest, ct).ConfigureAwait(false);
+                    await EnsureOneAsync(panel, dest, client, ct).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -47,6 +59,7 @@ public static class PanelProvisioner
                     try { notify?.Invoke($"面板 {panel.DisplayName} 下载失败：{ex.Message}"); } catch { }
                 }
             }
+            _availableCache = null;
             return GetAvailable();
         }
         finally
@@ -55,17 +68,16 @@ public static class PanelProvisioner
         }
     }
 
-    private static async Task EnsureOneAsync(PanelInfo panel, string dest, CancellationToken ct)
+    private static async Task EnsureOneAsync(PanelInfo panel, string dest, HttpClient client, CancellationToken ct)
     {
-        var tmpZip = Path.Combine(Path.GetTempPath(), $"clashui-{panel.Id}-{Guid.NewGuid():N}.zip");
-        var tmpDir = Path.Combine(Path.GetTempPath(), $"clashui-{panel.Id}-{Guid.NewGuid():N}");
+        var stagingDir = Path.Combine(AppPaths.UiDir, $".staging-{panel.Id}-{Guid.NewGuid():N}");
+        var tmpZip = Path.Combine(stagingDir, "panel.zip");
+        var tmpDir = Path.Combine(stagingDir, "extracted");
         try
         {
-            using (var client = new HttpClient())
+            Directory.CreateDirectory(stagingDir);
+            using (var resp = await client.GetAsync(panel.ZipUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
             {
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("ClashUI");
-                client.Timeout = TimeSpan.FromMinutes(5);
-                using var resp = await client.GetAsync(panel.ZipUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
                 resp.EnsureSuccessStatusCode();
                 await using var fs = new FileStream(tmpZip, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
                 await resp.Content.CopyToAsync(fs, ct).ConfigureAwait(false);
@@ -77,13 +89,10 @@ public static class PanelProvisioner
                 Directory.Delete(dest, recursive: true);
             Directory.CreateDirectory(AppPaths.UiDir);
             Directory.Move(src, dest);
-            if (!string.Equals(src, tmpDir, StringComparison.OrdinalIgnoreCase) && Directory.Exists(tmpDir))
-                Directory.Delete(tmpDir, recursive: true);
         }
         finally
         {
-            try { if (File.Exists(tmpZip)) File.Delete(tmpZip); } catch { }
-            try { if (Directory.Exists(tmpDir)) Directory.Delete(tmpDir, recursive: true); } catch { }
+            try { if (Directory.Exists(stagingDir)) Directory.Delete(stagingDir, recursive: true); } catch { }
         }
     }
 

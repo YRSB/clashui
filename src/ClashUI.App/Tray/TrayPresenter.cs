@@ -12,9 +12,10 @@ public sealed class TrayPresenter : IDisposable
     private readonly Action _showWindow;
     private readonly Action _shutdown;
     private bool _disposed;
+    private readonly Action<string>? _notify;
     private bool? _autoStartCache;
 
-    public TrayPresenter(ITrayView view, CoreOrchestrator orch, IPlatformPolicy platform, IDispatcher dispatcher, Action showWindow, Action? shutdown = null)
+    public TrayPresenter(ITrayView view, CoreOrchestrator orch, IPlatformPolicy platform, IDispatcher dispatcher, Action showWindow, Action? shutdown = null, Action<string>? notify = null)
     {
         _view = view;
         _orch = orch;
@@ -22,6 +23,7 @@ public sealed class TrayPresenter : IDisposable
         _dispatcher = dispatcher;
         _showWindow = showWindow;
         _shutdown = shutdown ?? App.Shutdown;
+        _notify = notify;
         _view.Command += OnCommand;
         _orch.StateChanged += OnStateChanged;
     }
@@ -31,6 +33,26 @@ public sealed class TrayPresenter : IDisposable
     private void OnStateChanged(AppState _) => _dispatcher.TryEnqueue(Refresh);
 
     public void RefreshNow() => Refresh();
+
+    private void Notify(string message)
+    {
+        if (_notify is not null)
+            _notify(message);
+        else
+            _dispatcher.TryEnqueue(() => App.ShowGlobalNotification(message));
+    }
+
+    private DesiredState CreateDesiredState(bool? systemProxy = null, bool? tun = null, bool? autoStart = null, bool? silentStart = null)
+    {
+        var s = _orch.Settings;
+        return new DesiredState(
+            systemProxy ?? s.SystemProxyEnabled,
+            s.MixedPort,
+            tun ?? s.TunEnabled,
+            autoStart,
+            silentStart ?? s.SilentStart,
+            Environment.ProcessPath ?? "");
+    }
 
     private void Refresh()
     {
@@ -69,16 +91,16 @@ public sealed class TrayPresenter : IDisposable
                     _orch.OpenProfilesFolder();
                     break;
                 case TrayCommandKind.ToggleSystemProxy:
-                    HandleSystemProxyToggle();
+                    _ = Task.Run(HandleSystemProxyToggleAsync);
                     break;
                 case TrayCommandKind.ToggleTun:
-                    HandleTunToggle();
+                    _ = Task.Run(HandleTunToggleAsync);
                     break;
                 case TrayCommandKind.ToggleSilentStart:
-                    HandleSilentStartToggle();
+                    ToggleSilentStart();
                     break;
                 case TrayCommandKind.ToggleAutoStart:
-                    HandleAutoStartToggle(cmd.Flag);
+                    _ = Task.Run(() => HandleAutoStartToggleAsync(cmd.Flag));
                     break;
                 case TrayCommandKind.SwitchProfile:
                     if (cmd.Payload is not null) _ = _orch.SwitchProfileAsync(cmd.Payload);
@@ -98,50 +120,46 @@ public sealed class TrayPresenter : IDisposable
         {
             AppLog.Error("托盘命令失败", ex);
         }
-        finally
-        {
-            _dispatcher.TryEnqueue(Refresh);
-        }
     }
 
-    private void HandleTunToggle()
+    private async Task HandleTunToggleAsync()
     {
-        var s = _orch.Settings;
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, !s.TunEnabled, null, s.SilentStart, Environment.ProcessPath ?? "");
-        var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
+        var desired = CreateDesiredState(tun: !_orch.Settings.TunEnabled);
+        var r = await _platform.ApplyAsync(desired).ConfigureAwait(false);
         if (r.Kind == PolicyResultKind.Ok)
         {
             _ = _orch.RestartAsync();
         }
         else if (r.Kind == PolicyResultKind.NeedsElevation)
         {
-            App.ShowGlobalNotification("切换 TUN 模式需要管理员权限，正在以管理员身份重启…");
+            Notify("切换 TUN 模式需要管理员权限，正在以管理员身份重启…");
             Exit();
         }
         else if (r.Kind == PolicyResultKind.CancelledByUser)
         {
-            App.ShowGlobalNotification("已取消提权，TUN 模式未更改");
+            Notify("已取消提权，TUN 模式未更改");
         }
         else if (r.Kind == PolicyResultKind.Failed)
         {
-            App.ShowGlobalNotification($"切换 TUN 失败：{r.Cause}");
+            Notify($"切换 TUN 失败：{r.Cause}");
         }
+        _dispatcher.TryEnqueue(Refresh);
     }
 
-    private void HandleSystemProxyToggle()
+    private async Task HandleSystemProxyToggleAsync()
     {
-        var s = _orch.Settings;
-        var desired = new DesiredState(!s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, null, s.SilentStart, Environment.ProcessPath ?? "");
-        var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
+        var desired = CreateDesiredState(systemProxy: !_orch.Settings.SystemProxyEnabled);
+        var r = await _platform.ApplyAsync(desired).ConfigureAwait(false);
         if (r.Kind == PolicyResultKind.Failed)
-            App.ShowGlobalNotification($"切换系统代理失败：{r.Cause}");
+            Notify($"切换系统代理失败：{r.Cause}");
+        _dispatcher.TryEnqueue(Refresh);
     }
 
-    private void HandleSilentStartToggle()
+    public void ToggleSilentStart()
     {
-        var s = _orch.Settings;
-        var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, null, !s.SilentStart, Environment.ProcessPath ?? "");
-        _ = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
+        var desired = CreateDesiredState(silentStart: !_orch.Settings.SilentStart);
+        _ = _platform.ApplyAsync(desired);
+        Refresh();
     }
 
     private bool GetAutoStartRegistered()
@@ -160,14 +178,13 @@ public sealed class TrayPresenter : IDisposable
         return false;
     }
 
-    private void HandleAutoStartToggle(bool? wantEnable)
+    private async Task HandleAutoStartToggleAsync(bool? wantEnable)
     {
         try
         {
-            var s = _orch.Settings;
             var enable = wantEnable ?? !GetAutoStartRegistered();
-            var desired = new DesiredState(s.SystemProxyEnabled, s.MixedPort, s.TunEnabled, enable, s.SilentStart, Environment.ProcessPath ?? "");
-            var r = _platform.ApplyAsync(desired).GetAwaiter().GetResult();
+            var desired = CreateDesiredState(autoStart: enable);
+            var r = await _platform.ApplyAsync(desired).ConfigureAwait(false);
             if (r.Kind == PolicyResultKind.Ok)
             {
                 _autoStartCache = enable;
@@ -178,19 +195,20 @@ public sealed class TrayPresenter : IDisposable
             }
             if (r.Kind == PolicyResultKind.NeedsElevation)
             {
-                App.ShowGlobalNotification("修改开机自启需要管理员权限，正在以管理员身份重启…");
+                Notify("修改开机自启需要管理员权限，正在以管理员身份重启…");
                 Exit();
             }
             else if (r.Kind == PolicyResultKind.CancelledByUser)
-                App.ShowGlobalNotification("已取消提权，开机自启未更改");
+                Notify("已取消提权，开机自启未更改");
             else if (r.Kind == PolicyResultKind.Failed)
-                App.ShowGlobalNotification("修改开机自启失败，详情见日志");
+                Notify("修改开机自启失败，详情见日志");
         }
         catch (Exception ex)
         {
             _autoStartCache = null;
             AppLog.Error("切换开机自启失败", ex);
         }
+        _dispatcher.TryEnqueue(Refresh);
     }
 
     private void RetryPanels()

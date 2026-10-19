@@ -10,7 +10,6 @@ public partial class App : Application
     private static MainWindow? _mainWindow;
 
     public static CoreOrchestrator Orchestrator => _host!.Orchestrator;
-    public static PolicyOps Policy => _host!.LegacyPolicy;
     public static bool StartSilent => _host?.StartSilent ?? false;
 
     public App() => InitializeComponent();

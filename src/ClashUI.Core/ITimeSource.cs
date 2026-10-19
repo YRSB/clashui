@@ -12,6 +12,7 @@ public sealed class SystemTimeSource : ITimeSource
     public Task Delay(TimeSpan d, CancellationToken ct) => Task.Delay(d, ct);
 }
 
+#if DEBUG
 public sealed class ManualTimeSource : ITimeSource
 {
     private readonly List<PendingDelay> _pending = [];
@@ -59,3 +60,5 @@ public sealed class ManualTimeSource : ITimeSource
         get { lock (_gate) return _pending.Count; }
     }
 }
+#endif
+

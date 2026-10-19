@@ -20,7 +20,9 @@ public sealed partial class MainWindow : Window
     private Task<bool>? _webViewInitTask;
     private readonly SemaphoreSlim _navGate = new(1, 1);
     private bool _isTransientNotification;
-    private DispatcherTimer? _notificationDismissTimer;
+    private readonly DispatcherTimer _notificationDismissTimer;
+    private readonly DispatcherTimer _suspendTimer;
+    private bool _isSuspended;
 
     public MainWindow(CoreOrchestrator orch)
     {
@@ -54,6 +56,37 @@ public sealed partial class MainWindow : Window
             e.Cancel = true;
             HideToTray();
         };
+
+        _notificationDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        _notificationDismissTimer.Tick += (_, _) =>
+        {
+            _notificationDismissTimer.Stop();
+            _isTransientNotification = false;
+            if (_orch.IsCoreRunning)
+                Banner.IsOpen = false;
+            else
+                OnStateChanged();
+        };
+
+        _suspendTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _suspendTimer.Tick += async (_, _) =>
+        {
+            _suspendTimer.Stop();
+            if (AppWindow.IsVisible || !_webReady || _isSuspended) return;
+            try
+            {
+                _isSuspended = true;
+                _loadedUrl = "";
+                Panel.CoreWebView2.Navigate("about:blank");
+                await Panel.CoreWebView2.TrySuspendAsync();
+                AppLog.Info("WebView2 后台已挂起并断开活动连接");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("挂起 WebView2 失败", ex);
+            }
+        };
+
         _orch.StateChanged += _ => _dispatcher.TryEnqueue(OnStateChanged);
         OnStateChanged();
         Panel.Loaded += async (_, _) => await NavigatePanelAsync();
@@ -61,15 +94,27 @@ public sealed partial class MainWindow : Window
 
     public void ShowAndActivate()
     {
+        _suspendTimer.Stop();
         AppWindow.Show();
         Activate();
         SetPanelMemoryTarget(low: false);
+        if (_isSuspended)
+        {
+            _isSuspended = false;
+            try { Panel.CoreWebView2.Resume(); } catch { }
+            _ = NavigatePanelAsync();
+        }
     }
 
     public void HideToTray()
     {
         AppWindow.Hide();
         SetPanelMemoryTarget(low: true);
+        if (_webReady && !_isSuspended)
+        {
+            _suspendTimer.Stop();
+            _suspendTimer.Start();
+        }
     }
 
     private void SetPanelMemoryTarget(bool low)
@@ -109,7 +154,7 @@ public sealed partial class MainWindow : Window
 
     private void OnStateChanged()
     {
-        var coreState = _orch.State.CoreState;
+        var coreState = _orch.CoreState;
         if (coreState == CoreState.Running)
         {
             if (!_isTransientNotification)
@@ -148,7 +193,7 @@ public sealed partial class MainWindow : Window
             var options = new CoreWebView2EnvironmentOptions
             {
                 EnableTrackingPrevention = false,
-                AdditionalBrowserArguments = "--renderer-process-limit=1",
+                AdditionalBrowserArguments = "--renderer-process-limit=1 --disable-features=msSmartScreenProtection,Translate,BackForwardCache,msEdgeSidebarV2 --disable-extensions --disable-component-update",
             };
             var env = await CoreWebView2Environment.CreateWithOptionsAsync(
                 null, AppPaths.WebView2DataDir, options);
@@ -260,17 +305,7 @@ public sealed partial class MainWindow : Window
 
     private void ScheduleDismissBanner()
     {
-        _notificationDismissTimer?.Stop();
-        _notificationDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        _notificationDismissTimer.Tick += (_, _) =>
-        {
-            _notificationDismissTimer?.Stop();
-            _isTransientNotification = false;
-            if (_orch.IsCoreRunning)
-                Banner.IsOpen = false;
-            else
-                OnStateChanged();
-        };
+        _notificationDismissTimer.Stop();
         _notificationDismissTimer.Start();
     }
 

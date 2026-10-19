@@ -1,5 +1,7 @@
 namespace ClashUI.Core;
 
+public enum CoreState { Stopped, Starting, Running }
+
 public interface ICoreRuntime : IDisposable
 {
     CoreState State { get; }
@@ -39,6 +41,7 @@ public sealed class MihomoCoreRuntime : ICoreRuntime
     public void Dispose() => _runtime.Dispose();
 }
 
+#if DEBUG
 public sealed class FakeCoreRuntime : ICoreRuntime
 {
     private CoreState _state = CoreState.Stopped;
@@ -68,3 +71,4 @@ public sealed class FakeCoreRuntime : ICoreRuntime
 
     public void Dispose() { }
 }
+#endif

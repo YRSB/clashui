@@ -11,6 +11,8 @@ public sealed class WinUiTrayView : ITrayView
     private readonly Action _showWindow;
     private readonly Action _toggleWindow;
     private string? _lastIconFile;
+    private string? _lastTooltip;
+    private MenuFlyout? _cachedMenu;
     private TrayViewModel? _latest;
 
     public event Action<TrayCommand>? Command;
@@ -49,7 +51,7 @@ public sealed class WinUiTrayView : ITrayView
         _icon = icon ?? throw new ArgumentException($"Failed to load icon from {iconPath}", nameof(iconPath), last);
         _icon.IsVisible = true;
         _icon.Selected += (_, _) => Safe(_toggleWindow);
-        _icon.ContextMenu += (_, e) => e.Flyout = BuildMenu(_latest);
+        _icon.ContextMenu += (_, e) => e.Flyout = _cachedMenu ??= BuildMenu(_latest);
     }
 
     public void Render(TrayViewModel m)
@@ -66,15 +68,45 @@ public sealed class WinUiTrayView : ITrayView
                 AppLog.Error("更新托盘图标失败", ex);
             }
         }
-        try
+        if (!string.Equals(_lastTooltip, m.Tooltip, StringComparison.Ordinal))
         {
-            _icon.Tooltip = m.Tooltip;
+            try
+            {
+                _icon.Tooltip = m.Tooltip;
+                _lastTooltip = m.Tooltip;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("更新托盘提示失败", ex);
+            }
         }
-        catch (Exception ex)
+        if (MenuContentChanged(_latest, m))
         {
-            AppLog.Error("更新托盘提示失败", ex);
+            _cachedMenu = null;
         }
         _latest = m;
+    }
+
+    private static bool MenuContentChanged(TrayViewModel? oldM, TrayViewModel newM)
+    {
+        if (oldM is null) return true;
+        if (oldM.SystemProxyChecked != newM.SystemProxyChecked ||
+            oldM.TunChecked != newM.TunChecked ||
+            oldM.SilentChecked != newM.SilentChecked ||
+            oldM.AutoStartChecked != newM.AutoStartChecked ||
+            oldM.IsEmpty != newM.IsEmpty)
+            return true;
+        if (oldM.Profiles.Count != newM.Profiles.Count || oldM.Panels.Count != newM.Panels.Count)
+            return true;
+        for (int i = 0; i < oldM.Profiles.Count; i++)
+        {
+            if (oldM.Profiles[i] != newM.Profiles[i]) return true;
+        }
+        for (int i = 0; i < oldM.Panels.Count; i++)
+        {
+            if (oldM.Panels[i] != newM.Panels[i]) return true;
+        }
+        return false;
     }
 
     private MenuFlyout BuildMenu(TrayViewModel? m)
@@ -159,6 +191,7 @@ public sealed class WinUiTrayView : ITrayView
     public void Dispose() => _icon.Dispose();
 }
 
+#if DEBUG
 public sealed class FakeTrayView : ITrayView
 {
     public TrayViewModel? LastModel { get; private set; }
@@ -168,3 +201,4 @@ public sealed class FakeTrayView : ITrayView
     public void Emit(TrayCommand cmd) => Command?.Invoke(cmd);
     public void Dispose() { }
 }
+#endif

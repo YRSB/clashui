@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -73,6 +74,8 @@ public sealed class PanelStaticServer : IDisposable
         }
     }
 
+    private sealed record RequestInfo(string Method, string Target, string? IfNoneMatch, DateTimeOffset? IfModifiedSince);
+
     private static void HandleClient(TcpClient client)
     {
         using (client)
@@ -82,26 +85,16 @@ public sealed class PanelStaticServer : IDisposable
                 using var stream = client.GetStream();
                 stream.ReadTimeout = 5000;
                 stream.WriteTimeout = 5000;
-                var header = ReadHeader(stream);
-                if (header is null)
+                var req = ReadRequest(stream);
+                if (req is null)
                     return;
-                var lineEnd = header.IndexOf("\r\n", StringComparison.Ordinal);
-                var requestLine = lineEnd >= 0 ? header[..lineEnd] : header;
-                var parts = requestLine.Split(' ');
-                if (parts.Length < 2)
-                {
-                    WriteStatus(stream, "GET", 400, "Bad Request", "text/plain; charset=utf-8", "Bad Request"u8.ToArray());
-                    return;
-                }
-                var method = parts[0];
-                var rawTarget = parts[1];
-                if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(req.Method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(req.Method, "HEAD", StringComparison.OrdinalIgnoreCase))
                 {
                     WriteStatus(stream, "GET", 405, "Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed"u8.ToArray());
                     return;
                 }
-                var path = rawTarget.Split('?')[0].Split('#')[0];
+                var path = req.Target.Split('?')[0].Split('#')[0];
                 string decoded;
                 try
                 {
@@ -109,7 +102,7 @@ public sealed class PanelStaticServer : IDisposable
                 }
                 catch
                 {
-                    WriteStatus(stream, method, 400, "Bad Request", "text/plain; charset=utf-8", "Bad Request"u8.ToArray());
+                    WriteStatus(stream, req.Method, 400, "Bad Request", "text/plain; charset=utf-8", "Bad Request"u8.ToArray());
                     return;
                 }
                 var trimmed = decoded.TrimStart('/');
@@ -132,7 +125,7 @@ public sealed class PanelStaticServer : IDisposable
                 }
                 else if (!PanelCatalog.IsValid(panelId))
                 {
-                    WriteStatus(stream, method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
+                    WriteStatus(stream, req.Method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
                     return;
                 }
                 else
@@ -148,7 +141,7 @@ public sealed class PanelStaticServer : IDisposable
                 if (!full.Equals(rootFull, StringComparison.OrdinalIgnoreCase)
                     && !full.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                 {
-                    WriteStatus(stream, method, 403, "Forbidden", "text/plain; charset=utf-8", "Forbidden"u8.ToArray());
+                    WriteStatus(stream, req.Method, 403, "Forbidden", "text/plain; charset=utf-8", "Forbidden"u8.ToArray());
                     return;
                 }
                 string file = full;
@@ -160,11 +153,11 @@ public sealed class PanelStaticServer : IDisposable
                         file = fallback;
                     else
                     {
-                        WriteStatus(stream, method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
+                        WriteStatus(stream, req.Method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
                         return;
                     }
                 }
-                ServeFile(stream, method, file);
+                ServeFile(stream, req, file);
             }
             catch (Exception ex)
             {
@@ -173,54 +166,145 @@ public sealed class PanelStaticServer : IDisposable
         }
     }
 
-    private static void ServeFile(NetworkStream stream, string method, string file)
+    private static void ServeFile(NetworkStream stream, RequestInfo req, string file)
     {
         try
         {
-            using var fs = File.OpenRead(file);
+            var fileInfo = new FileInfo(file);
+            if (!fileInfo.Exists)
+            {
+                WriteStatus(stream, req.Method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
+                return;
+            }
+
             var isHtml = file.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
                          || file.EndsWith(".htm", StringComparison.OrdinalIgnoreCase);
+
+            var lastModified = fileInfo.LastWriteTimeUtc;
+            var etag = $"\"{lastModified.Ticks:x}-{fileInfo.Length:x}\"";
+
+            if (!isHtml)
+            {
+                bool matchesEtag = req.IfNoneMatch is not null && string.Equals(req.IfNoneMatch, etag, StringComparison.Ordinal);
+                bool matchesDate = req.IfModifiedSince.HasValue && req.IfModifiedSince.Value.UtcDateTime >= lastModified.AddSeconds(-1);
+
+                if (matchesEtag || matchesDate)
+                {
+                    var notModifiedHeader = $"HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nConnection: close\r\nCache-Control: public, max-age=3600\r\n\r\n";
+                    var nmb = Encoding.ASCII.GetBytes(notModifiedHeader);
+                    stream.Write(nmb, 0, nmb.Length);
+                    return;
+                }
+            }
+
+            using var fs = fileInfo.OpenRead();
             var cacheControl = isHtml ? "no-cache" : "public, max-age=3600";
-            var header = $"HTTP/1.1 200 OK\r\nContent-Type: {MimeFor(file)}\r\nContent-Length: {fs.Length}\r\nConnection: close\r\nCache-Control: {cacheControl}\r\n\r\n";
+            var header = $"HTTP/1.1 200 OK\r\nContent-Type: {MimeFor(file)}\r\nContent-Length: {fs.Length}\r\nETag: {etag}\r\nConnection: close\r\nCache-Control: {cacheControl}\r\n\r\n";
             var headerBytes = Encoding.ASCII.GetBytes(header);
             stream.Write(headerBytes, 0, headerBytes.Length);
-            if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) && fs.Length > 0)
+            if (string.Equals(req.Method, "GET", StringComparison.OrdinalIgnoreCase) && fs.Length > 0)
                 fs.CopyTo(stream);
         }
         catch (Exception ex)
         {
             AppLog.Error($"静态面板读取失败 {file}", ex);
-            WriteStatus(stream, method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
+            WriteStatus(stream, req.Method, 404, "Not Found", "text/plain; charset=utf-8", "Not Found"u8.ToArray());
         }
     }
 
-    private static string? ReadHeader(NetworkStream stream)
+    private static RequestInfo? ReadRequest(NetworkStream stream)
     {
-        var buffer = new byte[8192];
-        using var ms = new MemoryStream();
-        int total = 0;
-        while (total < 16384)
+        var buffer = ArrayPool<byte>.Shared.Rent(4096);
+        try
         {
-            int read;
-            try
+            int total = 0;
+            while (total < 4096)
             {
-                read = stream.Read(buffer, 0, buffer.Length);
+                int read;
+                try
+                {
+                    read = stream.Read(buffer, total, buffer.Length - total);
+                }
+                catch
+                {
+                    return null;
+                }
+                if (read <= 0) break;
+                total += read;
+                var span = buffer.AsSpan(0, total);
+                int endIdx = span.IndexOf("\r\n\r\n"u8);
+                if (endIdx >= 0)
+                {
+                    return ParseRequest(span[..endIdx]);
+                }
             }
-            catch
-            {
-                return null;
-            }
-            if (read <= 0)
-                break;
-            ms.Write(buffer, 0, read);
-            total += read;
-            var text = Encoding.ASCII.GetString(ms.GetBuffer(), 0, (int)ms.Length);
-            if (text.Contains("\r\n\r\n", StringComparison.Ordinal))
-                return text;
-        }
-        if (ms.Length == 0)
+            if (total > 0)
+                return ParseRequest(buffer.AsSpan(0, total));
             return null;
-        return Encoding.ASCII.GetString(ms.ToArray());
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private static RequestInfo? ParseRequest(ReadOnlySpan<byte> headerSpan)
+    {
+        int lineEnd = headerSpan.IndexOf("\r\n"u8);
+        var requestLineSpan = lineEnd >= 0 ? headerSpan[..lineEnd] : headerSpan;
+        var requestLine = Encoding.ASCII.GetString(requestLineSpan);
+        var parts = requestLine.Split(' ');
+        if (parts.Length < 2) return null;
+
+        string method = parts[0];
+        string target = parts[1];
+        string? ifNoneMatch = null;
+        DateTimeOffset? ifModifiedSince = null;
+
+        if (lineEnd >= 0)
+        {
+            var rest = headerSpan[(lineEnd + 2)..];
+            while (!rest.IsEmpty)
+            {
+                int nextEnd = rest.IndexOf("\r\n"u8);
+                ReadOnlySpan<byte> line = nextEnd >= 0 ? rest[..nextEnd] : rest;
+                if (line.IsEmpty) break;
+
+                if (StartsWithIgnoreCase(line, "If-None-Match:"u8))
+                {
+                    var valSpan = line["If-None-Match:"u8.Length..].Trim((byte)' ');
+                    if (!valSpan.IsEmpty)
+                        ifNoneMatch = Encoding.ASCII.GetString(valSpan);
+                }
+                else if (StartsWithIgnoreCase(line, "If-Modified-Since:"u8))
+                {
+                    var valSpan = line["If-Modified-Since:"u8.Length..].Trim((byte)' ');
+                    if (!valSpan.IsEmpty)
+                    {
+                        var rawDate = Encoding.ASCII.GetString(valSpan);
+                        if (DateTimeOffset.TryParse(rawDate, out var dt))
+                            ifModifiedSince = dt;
+                    }
+                }
+
+                if (nextEnd < 0) break;
+                rest = rest[(nextEnd + 2)..];
+            }
+        }
+
+        return new RequestInfo(method, target, ifNoneMatch, ifModifiedSince);
+    }
+
+    private static bool StartsWithIgnoreCase(ReadOnlySpan<byte> span, ReadOnlySpan<byte> prefix)
+    {
+        if (span.Length < prefix.Length) return false;
+        for (int i = 0; i < prefix.Length; i++)
+        {
+            byte b1 = span[i];
+            byte b2 = prefix[i];
+            if (b1 != b2 && (b1 | 0x20) != (b2 | 0x20)) return false;
+        }
+        return true;
     }
 
     private static void WriteStatus(NetworkStream stream, string method, int code, string reason, string contentType, byte[] body)
