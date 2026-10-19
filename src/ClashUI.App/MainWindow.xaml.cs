@@ -21,8 +21,6 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _navGate = new(1, 1);
     private bool _isTransientNotification;
     private readonly DispatcherTimer _notificationDismissTimer;
-    private readonly DispatcherTimer _suspendTimer;
-    private bool _isSuspended;
 
     public MainWindow(CoreOrchestrator orch)
     {
@@ -68,28 +66,6 @@ public sealed partial class MainWindow : Window
                 OnStateChanged();
         };
 
-        _suspendTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
-        _suspendTimer.Tick += async (_, _) =>
-        {
-            _suspendTimer.Stop();
-            if (AppWindow.IsVisible || !_webReady || _isSuspended) return;
-            try
-            {
-                _isSuspended = true;
-                _loadedUrl = "";
-                Panel.CoreWebView2.Navigate("about:blank");
-                await Task.Delay(150);
-                if (AppWindow.IsVisible || !_isSuspended) return;
-                await Panel.CoreWebView2.TrySuspendAsync();
-                AppLog.Info("WebView2 后台已挂起并断开活动连接");
-            }
-            catch (Exception ex)
-            {
-                _isSuspended = false;
-                AppLog.Error("挂起 WebView2 失败", ex);
-            }
-        };
-
         _orch.StateChanged += _ => _dispatcher.TryEnqueue(OnStateChanged);
         OnStateChanged();
         Panel.Loaded += async (_, _) => await NavigatePanelAsync();
@@ -97,27 +73,15 @@ public sealed partial class MainWindow : Window
 
     public void ShowAndActivate()
     {
-        _suspendTimer.Stop();
         AppWindow.Show();
         Activate();
         SetPanelMemoryTarget(low: false);
-        if (_isSuspended)
-        {
-            _isSuspended = false;
-            try { Panel.CoreWebView2.Resume(); } catch { }
-        }
-        _ = NavigatePanelAsync();
     }
 
     public void HideToTray()
     {
         AppWindow.Hide();
         SetPanelMemoryTarget(low: true);
-        if (_webReady && !_isSuspended)
-        {
-            _suspendTimer.Stop();
-            _suspendTimer.Start();
-        }
     }
 
     private void SetPanelMemoryTarget(bool low)
@@ -222,7 +186,7 @@ public sealed partial class MainWindow : Window
         await _navGate.WaitAsync();
         try
         {
-            if (_isSuspended || !AppWindow.IsVisible || !_orch.IsCoreRunning) return;
+            if (!_orch.IsCoreRunning) return;
             string target;
             try
             {
