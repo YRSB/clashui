@@ -8,12 +8,14 @@ public static class AppLog
     private static readonly Channel<string> LogChannel = Channel.CreateUnbounded<string>(
         new UnboundedChannelOptions { SingleReader = true });
     private const long MaxLogFileBytes = 2 * 1024 * 1024; // 2MB
+    private static readonly Task WorkerTask = Task.Run(ProcessLogQueueAsync);
 
     public static event Action<string>? Line;
 
-    static AppLog()
+    public static void Flush()
     {
-        _ = Task.Run(ProcessLogQueueAsync);
+        LogChannel.Writer.TryComplete();
+        try { WorkerTask.Wait(500); } catch { }
     }
 
     public static void Info(string message) => Write("INFO", message);

@@ -91,16 +91,16 @@ public sealed class TrayPresenter : IDisposable
                     _orch.OpenProfilesFolder();
                     break;
                 case TrayCommandKind.ToggleSystemProxy:
-                    _ = Task.Run(HandleSystemProxyToggleAsync);
+                    _ = HandleSystemProxyToggleAsync();
                     break;
                 case TrayCommandKind.ToggleTun:
-                    _ = Task.Run(HandleTunToggleAsync);
+                    _ = HandleTunToggleAsync();
                     break;
                 case TrayCommandKind.ToggleSilentStart:
                     ToggleSilentStart();
                     break;
                 case TrayCommandKind.ToggleAutoStart:
-                    _ = Task.Run(() => HandleAutoStartToggleAsync(cmd.Flag));
+                    _ = HandleAutoStartToggleAsync(cmd.Flag);
                     break;
                 case TrayCommandKind.SwitchProfile:
                     if (cmd.Payload is not null) _ = _orch.SwitchProfileAsync(cmd.Payload);
@@ -235,8 +235,11 @@ public sealed class TrayPresenter : IDisposable
 
     private void Exit()
     {
-        try { _view.Dispose(); } catch { }
-        _shutdown();
+        _dispatcher.TryEnqueue(() =>
+        {
+            try { _view.Dispose(); } catch { }
+            _shutdown();
+        });
     }
 
     public void Dispose()

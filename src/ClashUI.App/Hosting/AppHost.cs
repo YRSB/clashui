@@ -224,6 +224,7 @@ public sealed class AppHost : IDisposable
         }
         finally
         {
+            try { AppLog.Flush(); } catch { }
             Environment.Exit(0);
         }
     }

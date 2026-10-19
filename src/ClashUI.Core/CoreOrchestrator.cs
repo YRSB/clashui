@@ -121,7 +121,11 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
 
     private void OnRuntimeStateChanged(CoreState state)
     {
-        if (state == CoreState.Running && _pendingProfileSwitch is { } pending)
+        if (state == CoreState.Stopped)
+        {
+            _pendingProfileSwitch = null;
+        }
+        else if (state == CoreState.Running && _pendingProfileSwitch is { } pending)
         {
             _pendingProfileSwitch = null;
             _ = Task.Run(async () =>
@@ -132,10 +136,7 @@ public sealed class CoreOrchestrator : IAsyncDisposable, IDisposable
         RaiseStateChanged();
     }
 
-    private void OnLegacyStateChanged(CoreState state)
-    {
-        RaiseStateChanged();
-    }
+    private void OnLegacyStateChanged(CoreState state) => OnRuntimeStateChanged(state);
 
     private void OnCoreReady()
     {

@@ -185,7 +185,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
                 if (probe is null) return;
                 try
                 {
-                    var v = await probe.GetVersionAsync(CancellationToken.None);
+                    var v = await probe.GetVersionAsync(ct);
                     if (v is not null)
                     {
                         SetState(CoreState.Running);
@@ -193,7 +193,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
                         return;
                     }
                 }
-                catch (OperationCanceledException) { return; }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
                 catch { }
             }
             if (State == CoreState.Starting && !ct.IsCancellationRequested)
@@ -235,7 +235,7 @@ public sealed class CoreRuntime : IAsyncDisposable, IDisposable
         _ = _delay.Delay(TimeSpan.FromSeconds(3), CancellationToken.None).ContinueWith(async _ =>
         {
             if (_userStop || State != CoreState.Stopped) return;
-            try { await StartAsync(launch, endpoint); } catch { SetState(CoreState.Stopped); }
+            try { await StartAsync(launch, endpoint, _probe); } catch { SetState(CoreState.Stopped); }
         }, TaskScheduler.Default);
     }
 

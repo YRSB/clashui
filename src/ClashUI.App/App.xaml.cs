@@ -88,7 +88,11 @@ public partial class App : Application
             _mainWindow.ShowPanelNotification(message);
     }
 
-    private static void ExitProcess() => Environment.Exit(0);
+    private static void ExitProcess()
+    {
+        try { AppLog.Flush(); } catch { }
+        Environment.Exit(0);
+    }
 
     private static bool HasSilentArg =>
         Environment.GetCommandLineArgs().Any(a => a is "--silent" or "-s");

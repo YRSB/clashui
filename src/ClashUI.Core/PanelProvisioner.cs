@@ -11,8 +11,12 @@ public static class PanelProvisioner
     {
         var norm = PanelCatalog.Normalize(id);
         var cached = _availableCache;
-        if (cached is not null) return cached.Contains(norm);
-        return File.Exists(Path.Combine(AppPaths.PanelDir(norm), "index.html"));
+        if (cached is not null && cached.Contains(norm, StringComparer.OrdinalIgnoreCase))
+            return true;
+        if (!File.Exists(Path.Combine(AppPaths.PanelDir(norm), "index.html")))
+            return false;
+        _availableCache = null;
+        return true;
     }
 
     public static IReadOnlyList<string> GetAvailable()
@@ -52,6 +56,7 @@ public static class PanelProvisioner
                 try
                 {
                     await EnsureOneAsync(panel, dest, client, ct).ConfigureAwait(false);
+                    _availableCache = null;
                 }
                 catch (Exception ex)
                 {

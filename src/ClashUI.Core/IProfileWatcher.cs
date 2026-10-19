@@ -42,4 +42,3 @@ public sealed class ManualProfileWatcher : IProfileWatcher
     public void Dispose() { }
 }
 #endif
-

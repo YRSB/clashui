@@ -41,7 +41,6 @@ rules:
     private static readonly YamlScalarNode KeyScript = new("script");
     private static readonly YamlScalarNode KeyShortcut = new("shortcut");
     private static readonly YamlScalarNode KeyPath = new("path");
-    private static readonly YamlScalarNode ValWarning = new("warning");
 
     public static string ResolveProfile(string activeProfile, bool createDefault)
     {
@@ -53,49 +52,49 @@ rules:
     }
 
     private static readonly Lock _cacheGate = new();
-    private static (string ProfilePath, DateTime LastWriteUtc, int SettingsHash)? _lastComposition;
+    private static (string ProfilePath, DateTime LastWriteUtc, long FileLength, int SettingsHash)? _lastComposition;
 
     public static string Compose(AppSettings settings)
     {
-        var profilePath = ResolveProfile(settings.ActiveProfile, createDefault: true);
-        var lastWriteUtc = File.GetLastWriteTimeUtc(profilePath);
-        int settingsHash = HashCode.Combine(settings.MixedPort, settings.ControllerAddr, settings.Secret, settings.TunEnabled);
-
         lock (_cacheGate)
         {
+            var profilePath = ResolveProfile(settings.ActiveProfile, createDefault: true);
+            var fi = new FileInfo(profilePath);
+            var lastWriteUtc = fi.Exists ? fi.LastWriteTimeUtc : DateTime.MinValue;
+            var fileLength = fi.Exists ? fi.Length : 0;
+            int settingsHash = HashCode.Combine(settings.MixedPort, settings.ControllerAddr, settings.Secret, settings.TunEnabled);
+
             if (_lastComposition is { } last &&
                 string.Equals(last.ProfilePath, profilePath, StringComparison.OrdinalIgnoreCase) &&
                 last.LastWriteUtc == lastWriteUtc &&
+                last.FileLength == fileLength &&
                 last.SettingsHash == settingsHash &&
                 File.Exists(AppPaths.RuntimeConfigFile))
             {
                 return AppPaths.RuntimeConfigFile;
             }
+
+            var root = LoadRoot(profilePath);
+
+            Set(root, KeyMixedPort, settings.MixedPort.ToString());
+            SetIfMissing(root, KeyLogLevel, new YamlScalarNode("warning"));
+            Set(root, KeyExternalController, settings.ControllerAddr);
+            Set(root, KeySecret, settings.Secret);
+            Set(root, KeyExternalUi, "ui");
+            ApplyTun(root, settings.TunEnabled);
+            if (settings.TunEnabled)
+                EnsureTunDns(root);
+            RelocateAssets(root, profilePath);
+
+            var stream = new YamlStream();
+            stream.Documents.Add(new YamlDocument(root));
+            WriteAtomic(stream);
+
+            _lastComposition = (profilePath, lastWriteUtc, fileLength, settingsHash);
+
+            AppLog.Info($"已合成运行时配置：{Path.GetFileName(profilePath)} -> {AppPaths.RuntimeConfigFile}");
+            return AppPaths.RuntimeConfigFile;
         }
-
-        var root = LoadRoot(profilePath);
-
-        Set(root, KeyMixedPort, settings.MixedPort.ToString());
-        SetIfMissing(root, KeyLogLevel, ValWarning);
-        Set(root, KeyExternalController, settings.ControllerAddr);
-        Set(root, KeySecret, settings.Secret);
-        Set(root, KeyExternalUi, "ui");
-        ApplyTun(root, settings.TunEnabled);
-        if (settings.TunEnabled)
-            EnsureTunDns(root);
-        RelocateAssets(root, profilePath);
-
-        var stream = new YamlStream();
-        stream.Documents.Add(new YamlDocument(root));
-        WriteAtomic(stream);
-
-        lock (_cacheGate)
-        {
-            _lastComposition = (profilePath, lastWriteUtc, settingsHash);
-        }
-
-        AppLog.Info($"已合成运行时配置：{Path.GetFileName(profilePath)} -> {AppPaths.RuntimeConfigFile}");
-        return AppPaths.RuntimeConfigFile;
     }
 
     private static YamlMappingNode LoadRoot(string profilePath)
@@ -127,37 +126,41 @@ rules:
         return map;
     }
 
-    private static void Set(YamlMappingNode root, YamlScalarNode key, string value)
-        => root.Children[key] = new YamlScalarNode(value);
+    private static void Set(YamlMappingNode root, YamlScalarNode lookupKey, string value)
+    {
+        var scalar = new YamlScalarNode(value);
+        if (root.Children.ContainsKey(lookupKey))
+            root.Children[lookupKey] = scalar;
+        else
+            root.Children.Add(new YamlScalarNode(lookupKey.Value), scalar);
+    }
 
     private static void Set(YamlMappingNode root, string key, string value)
-        => root.Children[new YamlScalarNode(key)] = new YamlScalarNode(value);
+        => Set(root, new YamlScalarNode(key), value);
 
-    private static void SetIfMissing(YamlMappingNode root, YamlScalarNode key, YamlNode value)
+    private static void SetIfMissing(YamlMappingNode root, YamlScalarNode lookupKey, YamlNode value)
     {
-        if (!root.Children.ContainsKey(key)) root.Children[key] = value;
+        if (!root.Children.ContainsKey(lookupKey))
+            root.Children.Add(new YamlScalarNode(lookupKey.Value), value);
     }
 
     private static void SetIfMissing(YamlMappingNode root, string key, YamlNode value)
-    {
-        var k = new YamlScalarNode(key);
-        if (!root.Children.ContainsKey(k)) root.Children[k] = value;
-    }
+        => SetIfMissing(root, new YamlScalarNode(key), value);
 
-    private static YamlMappingNode? GetMapping(YamlMappingNode root, YamlScalarNode key)
-        => root.Children.TryGetValue(key, out var node) ? node as YamlMappingNode : null;
+    private static YamlMappingNode? GetMapping(YamlMappingNode root, YamlScalarNode lookupKey)
+        => root.Children.TryGetValue(lookupKey, out var node) ? node as YamlMappingNode : null;
 
     private static YamlMappingNode? GetMapping(YamlMappingNode root, string key)
-        => root.Children.TryGetValue(new YamlScalarNode(key), out var node) ? node as YamlMappingNode : null;
+        => GetMapping(root, new YamlScalarNode(key));
 
-    private static YamlMappingNode GetOrAddMapping(YamlMappingNode root, YamlScalarNode key)
+    private static YamlMappingNode GetOrAddMapping(YamlMappingNode root, YamlScalarNode lookupKey)
     {
-        if (GetMapping(root, key) is { } existing) return existing;
-        if (root.Children.TryGetValue(key, out var bad))
-            throw new ConfigCompositionException($"配置项 {key.Value} 不是键值映射（实际为 {bad.NodeType}），请修正订阅文件");
+        if (GetMapping(root, lookupKey) is { } existing) return existing;
+        if (root.Children.TryGetValue(lookupKey, out var bad))
+            throw new ConfigCompositionException($"配置项 {lookupKey.Value} 不是键值映射（实际为 {bad.NodeType}），请修正订阅文件");
 
         var created = new YamlMappingNode();
-        root.Children[key] = created;
+        root.Children.Add(new YamlScalarNode(lookupKey.Value), created);
         return created;
     }
 

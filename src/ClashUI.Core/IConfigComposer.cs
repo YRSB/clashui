@@ -44,4 +44,3 @@ public sealed class FakeConfigComposer : IConfigComposer
     }
 }
 #endif
-

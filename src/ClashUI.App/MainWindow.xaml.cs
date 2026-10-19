@@ -78,11 +78,14 @@ public sealed partial class MainWindow : Window
                 _isSuspended = true;
                 _loadedUrl = "";
                 Panel.CoreWebView2.Navigate("about:blank");
+                await Task.Delay(150);
+                if (AppWindow.IsVisible || !_isSuspended) return;
                 await Panel.CoreWebView2.TrySuspendAsync();
                 AppLog.Info("WebView2 后台已挂起并断开活动连接");
             }
             catch (Exception ex)
             {
+                _isSuspended = false;
                 AppLog.Error("挂起 WebView2 失败", ex);
             }
         };
@@ -102,8 +105,8 @@ public sealed partial class MainWindow : Window
         {
             _isSuspended = false;
             try { Panel.CoreWebView2.Resume(); } catch { }
-            _ = NavigatePanelAsync();
         }
+        _ = NavigatePanelAsync();
     }
 
     public void HideToTray()
@@ -219,7 +222,7 @@ public sealed partial class MainWindow : Window
         await _navGate.WaitAsync();
         try
         {
-            if (!_orch.IsCoreRunning) return;
+            if (_isSuspended || !AppWindow.IsVisible || !_orch.IsCoreRunning) return;
             string target;
             try
             {
