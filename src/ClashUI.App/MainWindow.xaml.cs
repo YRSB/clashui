@@ -69,19 +69,19 @@ public sealed partial class MainWindow : Window
         };
 
         _orch.StateChanged += _ => _dispatcher.TryEnqueue(OnStateChanged);
-        AppWindow.Changed += (_, e) =>
+        AppWindow.Changed += (sender, e) =>
         {
             // dwm 重启/合成器重置后，WebView2 合成表面可能丢失而内容区白屏；
             // 可见性变化是显示路径上最可靠的重绘信号，在此触发恢复性重载。
             if (e.DidVisibilityChange && AppWindow.IsVisible)
                 _ = RecoverWebViewAsync("visible");
         };
-        Panel.NavigationCompleted += (_, e) =>
+        Panel.NavigationCompleted += (sender, e) =>
         {
             if (!e.IsSuccess)
             {
                 AppLog.Error($"面板导航失败（{e.WebErrorStatus}），稍后自动重试");
-                _dispatcher.TryEnqueue(() => RecoverWebViewAsync("nav-failed"));
+                _dispatcher.TryEnqueue(() => { _ = RecoverWebViewAsync("nav-failed"); });
             }
             else
             {
