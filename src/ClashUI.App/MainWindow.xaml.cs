@@ -21,6 +21,8 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _navGate = new(1, 1);
     private bool _isTransientNotification;
     private readonly DispatcherTimer _notificationDismissTimer;
+    private int _navFailureCount;
+    private DateTime _lastRecoverUtc = DateTime.MinValue;
 
     public MainWindow(CoreOrchestrator orch)
     {
@@ -67,6 +69,25 @@ public sealed partial class MainWindow : Window
         };
 
         _orch.StateChanged += _ => _dispatcher.TryEnqueue(OnStateChanged);
+        AppWindow.Changed += (_, e) =>
+        {
+            // dwm 重启/合成器重置后，WebView2 合成表面可能丢失而内容区白屏；
+            // 可见性变化是显示路径上最可靠的重绘信号，在此触发恢复性重载。
+            if (e.DidVisibilityChange && AppWindow.IsVisible)
+                _ = RecoverWebViewAsync("visible");
+        };
+        Panel.NavigationCompleted += (_, e) =>
+        {
+            if (!e.IsSuccess)
+            {
+                AppLog.Error($"面板导航失败（{e.WebErrorStatus}），稍后自动重试");
+                _dispatcher.TryEnqueue(() => RecoverWebViewAsync("nav-failed"));
+            }
+            else
+            {
+                _navFailureCount = 0;
+            }
+        };
         OnStateChanged();
         Panel.Loaded += async (_, _) => await NavigatePanelAsync();
     }
@@ -97,6 +118,33 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             AppLog.Error("调整面板内存目标失败", ex);
+        }
+    }
+
+    private async Task RecoverWebViewAsync(string reason)
+    {
+        if (DateTime.UtcNow - _lastRecoverUtc < TimeSpan.FromSeconds(10)) return;
+        if (!_webReady || Panel.CoreWebView2 is null) return;
+        try
+        {
+            _lastRecoverUtc = DateTime.UtcNow;
+            _navFailureCount++;
+            AppLog.Info($"面板恢复（{reason}，第 {_navFailureCount} 次）");
+            if (_navFailureCount >= 3)
+            {
+                _webReady = false;
+                _webViewInitTask = null;
+                _loadedUrl = "";
+                _navFailureCount = 0;
+                await NavigatePanelAsync();
+                return;
+            }
+            _loadedUrl = "";
+            await NavigatePanelAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("面板恢复失败", ex);
         }
     }
 
