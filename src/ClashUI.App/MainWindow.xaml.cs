@@ -1,4 +1,5 @@
 using ClashUI.Core;
+using System.Diagnostics;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
@@ -23,6 +24,7 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _notificationDismissTimer;
     private int _navFailureCount;
     private DateTime _lastRecoverUtc = DateTime.MinValue;
+    private int _dwmPid = DwmProcessId();
 
     public MainWindow(CoreOrchestrator orch)
     {
@@ -71,10 +73,14 @@ public sealed partial class MainWindow : Window
         _orch.StateChanged += _ => _dispatcher.TryEnqueue(OnStateChanged);
         AppWindow.Changed += (sender, e) =>
         {
-            // dwm 重启/合成器重置后，WebView2 合成表面可能丢失而内容区白屏；
-            // 可见性变化是显示路径上最可靠的重绘信号，在此触发恢复性重载。
-            if (e.DidVisibilityChange && AppWindow.IsVisible)
-                _ = RecoverWebViewAsync("visible");
+            // dwm 重启后 WebView2 合成表面丢失导致内容区白屏；仅当 dwm PID
+            // 变化（= 合成器重启过）时恢复，避免每次显示都重载面板。
+            if (!e.DidVisibilityChange || !AppWindow.IsVisible) return;
+            var pid = DwmProcessId();
+            if (pid == 0 || pid == _dwmPid) return;
+            AppLog.Info($"检测到 dwm 重启（{_dwmPid} → {pid}），恢复面板");
+            _dwmPid = pid;
+            _ = RecoverWebViewAsync("dwm-restart");
         };
         Panel.NavigationCompleted += (sender, e) =>
         {
@@ -145,6 +151,19 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             AppLog.Error("面板恢复失败", ex);
+        }
+    }
+
+    private static int DwmProcessId()
+    {
+        try
+        {
+            using var dwm = Process.GetProcessesByName("dwm").FirstOrDefault();
+            return dwm?.Id ?? 0;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
